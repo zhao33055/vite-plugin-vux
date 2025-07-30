@@ -1,6 +1,6 @@
 {
   "name": "vite-plugin-vux",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "license": "MIT",
   "author": "JasonZhao",
   "description": "基于 Vite 插件，用于在 Vite 项目中使用 Vux 组件库",

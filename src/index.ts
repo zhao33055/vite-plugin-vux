@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createFilter, type Plugin } from "vite";
 import stripComments from "strip-comments";
 
@@ -38,6 +39,9 @@ export default function (options: VuxOptions): Plugin[] {
   const plugins = options.plugins || [];
   const stylePath = getStylePath(root);
   const themeVariables = getThemeVariables(root, plugins);
+
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
 
   const config: Config = {
     root,
