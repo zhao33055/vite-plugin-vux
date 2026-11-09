@@ -10,7 +10,7 @@ Use [vux](https://github.com/airyland/vux), the Vue 2 mobile component library, 
 | ------- | --------------------------- |
 | `vite`  | `^5` \| `^6` \| `^7`        |
 | `vue`   | `^2.7` (uses `vue/compiler-sfc`) |
-| `vux`   | `^2.9.2` (CI covers 2.9.x and 2.11.x) |
+| `vux`   | `^2.9.2` (end-to-end build uses the playground's pinned 2.9.1) |
 | Node    | `>= 18`                     |
 
 ## Installation
@@ -196,7 +196,7 @@ pnpm run dev            # dev server
 pnpm run test:e2e       # from the repo root: builds the playground
 ```
 
-The module and byte counts in the build output are the regression signal — a jump back to ~700 modules means the auto-import rewrite stopped applying somewhere.
+The module and byte counts in the build output are the regression signal — a jump back to ~700 modules means the auto-import rewrite stopped applying somewhere. CI builds the playground but does not assert those numbers: for now they are read by a human in the job log.
 
 CI (`.github/workflows/ci.yml`) runs lint, format, typecheck, tests and build on Node 18/20/22, plus a playground build against a real — and deliberately older — vux release.
 

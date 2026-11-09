@@ -5,8 +5,10 @@ export default defineConfig({
     include: ["test/**/*.test.ts"],
     environment: "node",
     // The specs read `test/fixtures/vux-mini` instead of the installed package,
-    // so nothing here depends on a partially installed tree; forks keeps each
-    // file's `console.warn` spies and dependency-read caches to itself.
+    // so nothing here depends on a partially installed tree. Forks keeps the
+    // module-level caches - the file-read cache, the warned-name sets - from
+    // leaking between files. Diagnostics need no isolating any more: a spec
+    // hands its own `Logger` to the code under test.
     pool: "forks",
   },
 });
