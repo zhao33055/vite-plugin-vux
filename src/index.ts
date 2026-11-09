@@ -14,8 +14,9 @@ import {
   transformStyles,
   transformTemplate,
   type SfcCompiler,
-  type TransFormPlugin,
 } from "./compiler";
+import type { BlockTransform } from "./contracts";
+import { normalizePath, scopeOf } from "./vux/paths";
 import {
   inNodeModules,
   inVux,
@@ -24,14 +25,11 @@ import {
   parseRequest,
 } from "./utils/query";
 import { getComponentMap, getStylesDir, getThemeVariables } from "./vuxApi";
-import { createStyleTransformPlugin } from "./style";
-import { createSsrTransformPlugin } from "./ssr";
-import { createTemplateAttrsTransformPlugin } from "./template-attrs";
-import { createXiconTransformPlugin } from "./icon";
-import {
-  createI18nTransformPluginForCustomBlock,
-  createI18nTransformPluginFor$t,
-} from "./i18n";
+import { createStyleTransform } from "./style";
+import { createSsrTransform } from "./ssr";
+import { createTemplateAttrsTransform } from "./template-attrs";
+import { createXiconTransform } from "./icon";
+import { createI18nCustomBlockTransform, createI18nTransform } from "./i18n";
 import { transformVuxImport } from "./transforms/auto-import";
 import { patchBareComponentImports, patchVuxSource } from "./transforms/vux-patches";
 
@@ -89,9 +87,10 @@ const OPTIMIZE_DEPS_INCLUDE = [
 export interface VuxContext {
   config: Config;
   compiler: SfcCompiler;
-  templatePlugins: TransFormPlugin[];
-  stylePlugins: TransFormPlugin[];
-  customBlockPlugins: TransFormPlugin[];
+  /** One list per kind of block the SFC transform re-emits. */
+  templateTransforms: BlockTransform[];
+  styleTransforms: BlockTransform[];
+  customBlockTransforms: BlockTransform[];
 }
 
 /**
@@ -116,16 +115,14 @@ export function createVuxContext(
   return {
     config,
     compiler: resolveCompiler(root),
-    templatePlugins: [
-      createTemplateAttrsTransformPlugin("template-attrs", config),
-      createSsrTransformPlugin("ssr", config),
-      createXiconTransformPlugin("x-icon", config),
-      createI18nTransformPluginFor$t("i18n-t", config),
+    templateTransforms: [
+      createTemplateAttrsTransform(),
+      createSsrTransform(config),
+      createXiconTransform(config),
+      createI18nTransform(config),
     ],
-    stylePlugins: [createStyleTransformPlugin("style-parser", config)],
-    customBlockPlugins: [
-      createI18nTransformPluginForCustomBlock("i18n-custom-block", config),
-    ],
+    styleTransforms: [createStyleTransform(config)],
+    customBlockTransforms: [createI18nCustomBlockTransform()],
   };
 }
 
@@ -159,10 +156,7 @@ function createPreBundlePatchPlugin(): EsbuildPlugin {
         { filter: /vux[/\\]src[/\\](plugins|components)[/\\]/ },
         async (args) => {
           const code = await fs.promises.readFile(args.path, "utf-8");
-          const patched = patchBareComponentImports(
-            args.path.split("\\").join("/"),
-            code
-          );
+          const patched = patchBareComponentImports(normalizePath(args.path), code);
 
           return patched === null
             ? undefined
@@ -190,10 +184,14 @@ const RELATIVE_IMPORT_RE = /^\.{1,2}\//;
  * Keeping them typed means a config written for vux-loader still compiles; a
  * config that actually *sets* one is asking for behaviour that will not happen,
  * which deserves a message rather than silence.
+ *
+ * `vuxLocale` and `vuxStaticReplace` are implemented, and so is
+ * `vuxFunctionName` - the i18n transform matches the configured call instead of
+ * hard-coding `$t`. The four below all describe work on the *app's* own strings,
+ * which stays vue-i18n's job under Vite.
  */
 const UNSUPPORTED_I18N_OPTIONS = [
   "functionName",
-  "vuxFunctionName",
   "localeList",
   "staticTranslations",
   "staticReplace",
@@ -210,7 +208,7 @@ function warnUnsupportedOptions(options: VuxOptions): void {
 
   console.warn(
     `[vite-plugin-vux] the i18n options ${used.join(", ")} have no effect under Vite: ` +
-      `only "$t()" calls inside the vux package itself are statically replaced. ` +
+      `only the translation calls inside the vux package itself are statically replaced. ` +
       `Keep vue-i18n for your own strings.`
   );
 }
@@ -294,11 +292,16 @@ export default function vux(options: VuxOptions = {}): Plugin[] {
         code
       );
 
+      // Decided once per file, for every block in it.
+      const scope = scopeOf(filename);
+
       return generateVue(
-        transformTemplate(template, context.templatePlugins),
-        transformScript(script),
-        transformStyles(styles, context.stylePlugins),
-        transformCustomBlocks(customBlocks, context.customBlockPlugins)
+        transformTemplate(template, context.templateTransforms, scope),
+        // Scripts are re-emitted untouched: the component-import rewriting
+        // happens on the compiled output, in the auto-import plugin.
+        transformScript(script, [], scope),
+        transformStyles(styles, context.styleTransforms, scope),
+        transformCustomBlocks(customBlocks, context.customBlockTransforms, scope)
       );
     },
   };
@@ -312,7 +315,7 @@ export default function vux(options: VuxOptions = {}): Plugin[] {
       const { filename } = parseRequest(id);
       if (!isScriptLike(id) || !inVux(filename)) return null;
 
-      return patchVuxSource(filename.split("\\").join("/"), code, filename, (message) =>
+      return patchVuxSource(normalizePath(filename), code, filename, (message) =>
         this.warn(message)
       );
     },
@@ -333,7 +336,7 @@ export default function vux(options: VuxOptions = {}): Plugin[] {
 
     async resolveId(source, importer, options) {
       if (!importer || !RELATIVE_IMPORT_RE.test(source)) return null;
-      if (!inVux(parseRequest(importer).filename.split("\\").join("/"))) return null;
+      if (!inVux(normalizePath(parseRequest(importer).filename))) return null;
 
       for (const candidate of [`${source}/index.vue`, `${source}.vue`]) {
         const resolved = await this.resolve(candidate, importer, {

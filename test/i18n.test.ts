@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  createI18nTransformPluginForCustomBlock,
+  createI18nCustomBlockTransform,
+  createI18nTransform,
   resolveStaticTranslations,
 } from "../src/i18n";
 import { compileVue, resolveCompiler } from "../src/compiler";
-import type { Block } from "../src/compiler";
-import type { Config } from "../src/types";
+import type { BlockView } from "../src/contracts";
+import { scopeOf } from "../src/vux/paths";
+import type { Config, VuxPlugin } from "../src/types";
 
 const locales: Record<string, Record<string, string>> = {
   "zh-CN": {
@@ -102,36 +104,98 @@ describe("resolveStaticTranslations", () => {
 
     expect(out).toBe('"取消" "取消"');
   });
-});
 
-describe("i18n custom block plugin", () => {
-  const compiler = resolveCompiler(process.cwd());
-  const config: Config = {
-    root: process.cwd(),
-    ssr: false,
-    componentMap: {},
-    plugins: [],
-  };
+  it("matches the function name it is configured with", () => {
+    const options = { prefix: "vux.actionsheet", lookup, functionName: "$tt" };
 
-  it("destroys i18n blocks coming from vux", () => {
-    const { customBlocks } = compileVue(
-      compiler,
-      "/app/node_modules/vux/src/components/actionsheet/index.vue",
-      "<template><p/></template>\n<i18n>en: hi</i18n>"
+    expect(resolveStaticTranslations(`{{ $tt('cancel') }}`, options)).toBe(
+      '{{ "取消" }}'
     );
-    const plugin = createI18nTransformPluginForCustomBlock("i18n-block", config);
-
-    expect(plugin.fn(customBlocks[0] as Block)).toMatchObject({ destroyed: true });
+    // Renaming must not leave the default spelling half-replaced.
+    expect(resolveStaticTranslations(`{{ $t('cancel') }}`, options)).toBe(
+      "{{ $t('cancel') }}"
+    );
   });
 
-  it("keeps i18n blocks from user projects", () => {
+  it("will not match a call whose name merely ends in the configured one", () => {
+    // `t` is a suffix of `$t`; matching it would reach into the app's own calls.
+    expect(
+      resolveStaticTranslations(`{{ $t('cancel') }}`, {
+        prefix: "vux.actionsheet",
+        lookup,
+        functionName: "t",
+      })
+    ).toBe("{{ $t('cancel') }}");
+  });
+});
+
+describe("i18n template transform", () => {
+  const VUX_FILE = "/app/node_modules/vux/src/components/actionsheet/index.vue";
+
+  function run(plugins: VuxPlugin[], code: string, filename = VUX_FILE) {
+    const config: Config = { root: process.cwd(), ssr: false, componentMap: {}, plugins };
+    const block: BlockView = { type: "template", filename, content: code, attrs: {} };
+
+    return createI18nTransform(config)(block, scopeOf(filename));
+  }
+
+  it("replaces keys under the component's own namespace", () => {
+    // `vux.actionsheet.cancel` is in the installed package's locales/all.yml.
+    expect(run([], "{{ $t('cancel') }}")).toEqual({ content: '{{ "取消" }}' });
+  });
+
+  it("leaves an app's own $t calls to vue-i18n", () => {
+    expect(run([], "{{ $t('cancel') }}", "/app/src/pages/Home.vue")).toBeUndefined();
+  });
+
+  it("resolves through a renamed translation function", () => {
+    const renamed: VuxPlugin[] = [{ name: "i18n", vuxFunctionName: "$tt" }];
+
+    expect(run(renamed, "{{ $tt('cancel') }}")).toEqual({ content: '{{ "取消" }}' });
+    // Both spellings are checked: the configured one must win, the other stay.
+    expect(run(renamed, "{{ $t('cancel') }}")).toBeUndefined();
+  });
+
+  it("does nothing when vuxStaticReplace is false", () => {
+    const dynamic: VuxPlugin[] = [{ name: "i18n", vuxStaticReplace: false }];
+
+    expect(run(dynamic, "{{ $t('cancel') }}")).toBeUndefined();
+  });
+
+  it("reports nothing when the template has no calls at all", () => {
+    expect(run([], "<div>plain markup</div>")).toBeUndefined();
+  });
+});
+
+describe("i18n custom block transform", () => {
+  const compiler = resolveCompiler(process.cwd());
+
+  function customBlock(filename: string) {
     const { customBlocks } = compileVue(
       compiler,
-      "/app/src/App.vue",
+      filename,
       "<template><p/></template>\n<i18n>en: hi</i18n>"
     );
-    const plugin = createI18nTransformPluginForCustomBlock("i18n-block", config);
+    const block = customBlocks[0];
+    if (!block) throw new Error("no custom block parsed");
 
-    expect(plugin.fn(customBlocks[0] as Block)).toBeUndefined();
+    const view: BlockView = {
+      type: block.type,
+      filename: block.filename,
+      content: block.content,
+      attrs: block.attrs,
+    };
+
+    return createI18nCustomBlockTransform()(view, scopeOf(filename));
+  }
+
+  it("drops i18n blocks coming from node_modules", () => {
+    expect(
+      customBlock("/app/node_modules/vux/src/components/actionsheet/index.vue")
+    ).toEqual({ drop: true });
+  });
+
+  it("keeps i18n blocks from the app's own components", () => {
+    expect(customBlock("/app/src/App.vue")).toBeUndefined();
   });
 });

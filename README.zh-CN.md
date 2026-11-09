@@ -110,14 +110,17 @@ vux({
   name: "i18n",
   vuxStaticReplace: true,   // 默认 true
   vuxLocale: "zh-CN",       // 默认 "zh-CN"
+  vuxFunctionName: "$t",    // 默认 "$t"
 }
 ```
 
 `vuxStaticReplace: true`（默认）时，**vux 自身模板**里的 `$t('key')` 会被替换成从 `vux/src/locales/all.yml` 读到的字面量，key 规则为 `vux.<组件名>.<key>`。这正是你可以不安装 `vue-i18n` 也能使用 `actionsheet`、`datetime`、`toast` 等组件的原因。设为 `false` 则保留为运行时查询，此时必须安装 `vue-i18n` 并载入 vux 的语言包。
 
+`vuxFunctionName` 用于改变匹配的方法名，适用于 vux 模板被预处理成别的翻译方法的场景。
+
 你自己的 `$t()` 不会被改写 —— 只有 vux 自身的字符串会被内联，且只有纯字符串字面量才替换（`$t(item.label)` 保持为运行时表达式）。
 
-> vux-loader 的 `functionName`、`vuxFunctionName`、`localeList`、`staticTranslations`、`staticReplace` 这几个选项为了兼容性仍然被接收并有类型定义，但当前实现只替换 vux 包内的 `$t()`。请不要依赖它们。
+> vux-loader 的 `functionName`、`localeList`、`staticTranslations`、`staticReplace` 描述的都是对**业务代码**自身的字符串做替换，而在 Vite 下这依然是 `vue-i18n` 的职责。它们为了兼容性仍然被接收并有类型定义（这样 vux-loader 的配置仍能通过编译）；一旦真的设置，构建时会打印告警而不是静默忽略。
 
 ### `<x-icon>`
 
@@ -132,12 +135,13 @@ vux({
 
 ## 插件注册了什么
 
-`vux()` 返回三个 Vite 插件：
+`vux()` 返回四个 Vite 插件：
 
 | 插件                          | 阶段   | 职责                                                                          |
 | ----------------------------- | ------ | ----------------------------------------------------------------------------- |
-| `vite-plugin-vux:sfc`         | `pre`  | 重写原始 SFC，让 `@vitejs/plugin-vue2` 拿到已经规范化的块：删除依赖包内的 `<template lang="...">`、丢弃依赖包内的 `<i18n>` 块、内联 `<x-icon>`、静态解析 vux 的 `$t()`、应用 `less-theme` / `style-parser`。其 `config()` 钩子会把 `.vue` 追加进 `resolve.extensions`、设置 less 的 `paths` 与 `modifyVars`、补充 `optimizeDeps.include`（vux 那些藏得很深的依赖），并通过 `\0` 前缀的虚拟模块提供已打包成 ESM 的 `vux-xscroll`。 |
-| `vite-plugin-vux:patches`     | `pre`  | 针对 vux 包源码的修补：为其无扩展名的组件导入补上 `/index.vue`（在 esbuild 预构建阶段同样生效，那里 Vite 的解析器不会运行），并把「ESM 与 `require()` 混用」文件里的顶层 `const x = require('…')` 提升为 import —— 这类文件 Vite 的 CommonJS 处理会跳过（因为它忽略一切含 ESM 语法的文件）。纯 CommonJS 文件则刻意交给 Vite 处理。 |
+| `vite-plugin-vux:sfc`         | `pre`  | 重写原始 SFC，让 `@vitejs/plugin-vue2` 拿到已经规范化的块：删除依赖包内的 `<template lang="...">`、丢弃依赖包内的 `<i18n>` 块、内联 `<x-icon>`、静态解析 vux 的 `$t()`、应用 `less-theme` / `style-parser`。其 `config()` 钩子设置 less 的 `paths` 与 `modifyVars`、补充 `optimizeDeps.include`（vux 那些藏得很深的依赖），并通过 `\0` 前缀的虚拟模块提供已打包成 ESM 的 `vux-xscroll`。 |
+| `vite-plugin-vux:patches`     | `pre`  | 针对 vux 包源码的修补：把「ESM 与 `require()` 混用」文件里的顶层 `const x = require('…')` 提升为 import —— 这类文件 Vite 的 CommonJS 处理会跳过（因为它忽略一切含 ESM 语法的文件）。纯 CommonJS 文件则刻意交给 Vite 处理。 |
+| `vite-plugin-vux:resolver`    | `post` | 解析 vux 包内无扩展名的相对导入（`import '../inline-desc'` → `…/index.vue`）。它在 Vite 自身的解析之后运行，且只对「导入方位于 vux 内」的请求生效，因此你项目里的 `resolve.extensions` 保持原样。在 esbuild 预构建阶段（Vite 的解析器不会运行），同样的修补由一个 esbuild 钩子完成。 |
 | `vite-plugin-vux:auto-import` | normal | 把 `import { X } from "vux"` 改写为每组件一个默认导入（基于 Babel AST 而非字符串匹配），未知名字各告警一次。 |
 
 ## 从 vux-loader 迁移
@@ -148,7 +152,7 @@ vux({
 | `vux-loader` 的 `css_match` / `.vue` 样式处理         | 自动完成，组件自带 `<style>` 会被编译               |
 | `{ name: 'less-theme', path }`                       | 形状不变，写进 `vux({ plugins: [...] })`            |
 | `{ name: 'style-parser', fn }`                       | 形状不变                                            |
-| `{ name: 'i18n', vuxStaticReplace, vuxLocale }`      | 形状不变                                            |
+| `{ name: 'i18n', vuxStaticReplace, vuxLocale }`      | 形状不变，另支持 `vuxFunctionName`                  |
 | `mapGet('vux/src/components/...')`                   | 不再需要，直接写常规导入即可                        |
 | 只用部分组件时还要 `import 'vux/dist/vux.css'`        | 不再需要（如需全量样式仍可手动引入）                |
 

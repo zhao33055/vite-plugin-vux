@@ -1,26 +1,23 @@
 import type { SFCBlock, SFCDescriptor } from "vue/compiler-sfc";
 
 import { tryRequire } from "./utils/module";
+import type { BlockTransform, BlockView, FileScope } from "./contracts";
 
 /**
- * A single SFC block, tagged with the file it came from so that transform
- * plugins can decide whether a block belongs to vux or to user code.
+ * A single SFC block, tagged with the file it came from.
+ *
+ * This is the pipeline's own mutable copy: `vue/compiler-sfc` hands back one
+ * descriptor per parse and the blocks are re-serialised afterwards. Transforms
+ * never see it - they get a read-only `BlockView` (see `./contracts`).
  */
 export interface Block extends Omit<SFCBlock, "start" | "end"> {
   filename: string;
-  /** Set by a plugin to drop the block from the generated output entirely. */
-  destroyed?: boolean;
   /**
    * Source offsets. The parser always fills these in, but a block only needs
    * `type`, `content` and `attrs` to be re-serialised, so they stay optional.
    */
   start?: number;
   end?: number;
-}
-
-export interface TransFormPlugin {
-  name: string;
-  fn: (block: Block) => Block | void | null | undefined;
 }
 
 /** A parsed SFC descriptor, as produced by `vue/compiler-sfc`. */
@@ -56,22 +53,6 @@ export function resolveCompiler(root: string): SfcCompiler {
   return compiler;
 }
 
-export function getType(block: Block): string {
-  return block.type;
-}
-
-export function getFileName(block: Block): string {
-  return block.filename;
-}
-
-export function getAttrs(block: Block): Record<string, string | true> {
-  return block.attrs;
-}
-
-export function getContent(block: Block): string {
-  return block.content;
-}
-
 function escapeAttrValue(value: string | true): string {
   return value === true ? "" : String(value).replace(/"/g, "&quot;");
 }
@@ -86,35 +67,48 @@ function attrsToString(attrs: Record<string, string | true>): string {
     .join("");
 }
 
-/** A block that survived the pipeline, or `""` when a plugin dropped it. */
+/** A block that survived the pipeline, or `""` when a transform dropped it. */
 type TransformedBlock = Block | "";
 
-function transformBlockWithPlugins(
+/**
+ * Runs the transforms over one block.
+ *
+ * This is the only place in the pipeline that holds mutable state: transforms
+ * report patches, and the accumulated `content`/`attrs` are threaded through to
+ * the next transform, so an icon replacement is visible to the i18n pass that
+ * follows it.
+ */
+function applyTransforms(
   block: Block,
-  plugins: TransFormPlugin[] = []
+  transforms: readonly BlockTransform[],
+  scope: FileScope
 ): TransformedBlock {
-  return plugins.reduce<TransformedBlock>((acc, plugin) => {
-    if (!plugin || typeof plugin.fn !== "function") {
-      return acc;
-    }
+  let { content, attrs } = block;
 
-    const result = plugin.fn(acc as Block);
-    if (!result) {
-      return acc;
-    }
-    if (result.destroyed) {
-      return "";
-    }
+  for (const transform of transforms) {
+    const view: BlockView = {
+      type: block.type,
+      filename: block.filename,
+      content,
+      attrs,
+    };
 
-    return result;
-  }, block);
+    const patch = transform(view, scope);
+    if (!patch) continue;
+    if (patch.drop) return "";
+
+    if (patch.content !== undefined) content = patch.content;
+    if (patch.attrs !== undefined) attrs = patch.attrs;
+  }
+
+  if (content === block.content && attrs === block.attrs) return block;
+  return { ...block, content, attrs };
 }
 
 function blockToCode(block: Block | ""): string {
   if (!block) return "";
 
-  const attrs = attrsToString(getAttrs(block));
-  return `<${getType(block)}${attrs}>${getContent(block)}</${getType(block)}>`;
+  return `<${block.type}${attrsToString(block.attrs)}>${block.content}</${block.type}>`;
 }
 
 export interface CompiledVue {
@@ -151,44 +145,51 @@ export function compileVue(
   return { template, script, styles, customBlocks };
 }
 
+/**
+ * The four entry points below re-emit one part of the SFC each.
+ *
+ * `scope` is passed in rather than derived here so that this module keeps no
+ * opinion about which package a file came from - that is `vux/paths`' job, and
+ * the caller resolves it once per file for all four kinds of block.
+ */
 export function transformTemplate(
   template: Block | undefined,
-  plugins: TransFormPlugin[] = []
+  transforms: readonly BlockTransform[],
+  scope: FileScope
 ): string {
   if (!template) return "";
-  return blockToCode(transformBlockWithPlugins(template, plugins));
+  return blockToCode(applyTransforms(template, transforms, scope));
 }
 
 export function transformScript(
   script: Block | undefined,
-  plugins: TransFormPlugin[] = []
+  transforms: readonly BlockTransform[],
+  scope: FileScope
 ): string {
   if (!script) return "";
-  return blockToCode(transformBlockWithPlugins(script, plugins));
+  return blockToCode(applyTransforms(script, transforms, scope));
 }
 
 export function transformStyles(
   styles: Block[],
-  plugins: TransFormPlugin[] = []
+  transforms: readonly BlockTransform[],
+  scope: FileScope
 ): string[] {
   return styles.reduce<string[]>((acc, styleBlock) => {
-    const newStyleBlock = transformBlockWithPlugins(styleBlock, plugins);
-    if (newStyleBlock) {
-      acc.push(blockToCode(newStyleBlock));
-    }
+    const transformed = applyTransforms(styleBlock, transforms, scope);
+    if (transformed) acc.push(blockToCode(transformed));
     return acc;
   }, []);
 }
 
 export function transformCustomBlocks(
   customBlocks: Block[],
-  plugins: TransFormPlugin[] = []
+  transforms: readonly BlockTransform[],
+  scope: FileScope
 ): string[] {
   return customBlocks.reduce<string[]>((acc, customBlock) => {
-    const newCustomBlock = transformBlockWithPlugins(customBlock, plugins);
-    if (!newCustomBlock) return acc;
-
-    acc.push(blockToCode(newCustomBlock));
+    const transformed = applyTransforms(customBlock, transforms, scope);
+    if (transformed) acc.push(blockToCode(transformed));
     return acc;
   }, []);
 }

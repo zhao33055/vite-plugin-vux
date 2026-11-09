@@ -9,8 +9,8 @@ import {
   transformTemplate,
   resolveCompiler,
   type Block,
-  type TransFormPlugin,
 } from "../src/compiler";
+import { NO_SCOPE, type BlockTransform } from "../src/contracts";
 
 const compiler = resolveCompiler(process.cwd());
 
@@ -56,50 +56,74 @@ describe("compileVue", () => {
 });
 
 describe("block transforms", () => {
-  const upper = (name: string): TransFormPlugin => ({
-    name,
-    fn: (block) => {
-      block.content = block.content.toUpperCase();
-      return block;
-    },
+  const scope = { ...NO_SCOPE, component: "alert" };
+
+  const upper = (): BlockTransform => (block) => ({
+    content: block.content.toUpperCase(),
   });
 
-  it("applies plugins in order", () => {
+  it("applies transforms in order, seeing each other's output", () => {
     const { template } = vue("<template><div>abc</div></template>");
-    const out = transformTemplate(template, [upper("a"), upper("b")]);
+    const seen: string[] = [];
+    const mark =
+      (letter: string): BlockTransform =>
+      (block) => ({
+        content: `${block.content}${letter}`,
+      });
+    const record: BlockTransform = (block) => {
+      seen.push(block.content);
+    };
 
-    expect(out).toBe("<template><DIV>ABC</DIV></template>");
+    const out = transformTemplate(template, [mark("a"), record, mark("b")], scope);
+
+    expect(out).toBe("<template><div>abc</div>ab</template>");
+    // The middle transform saw the first one's output, not the source.
+    expect(seen).toEqual(["<div>abc</div>a"]);
   });
 
-  it("keeps the block when a plugin returns nothing", () => {
+  it("keeps the block when a transform returns nothing", () => {
     const { template } = vue("<template><div>x</div></template>");
-    const out = transformTemplate(template, [
-      { name: "noop", fn: () => undefined },
-      upper("a"),
-    ]);
+    const out = transformTemplate(template, [() => undefined, upper()], scope);
 
     expect(out).toBe("<template><DIV>X</DIV></template>");
   });
 
-  it("drops a block flagged as destroyed", () => {
+  it("drops a block a transform asked to remove", () => {
     const { customBlocks } = vue("<template><p/></template>\n<i18n>text</i18n>");
-    const destroyer: TransFormPlugin = {
-      name: "destroy",
-      fn: (block: Block) => {
-        block.destroyed = true;
-        return block;
-      },
-    };
 
-    expect(transformCustomBlocks(customBlocks, [destroyer])).toEqual([]);
-    expect(transformCustomBlocks(customBlocks, [])).toEqual(["<i18n>text</i18n>"]);
+    expect(transformCustomBlocks(customBlocks, [() => ({ drop: true })], scope)).toEqual(
+      []
+    );
+    expect(transformCustomBlocks(customBlocks, [], scope)).toEqual(["<i18n>text</i18n>"]);
+  });
+
+  it("reports an attribute patch as a new object, never an edit", () => {
+    // The descriptor's `attrs` is shared with the block copy made in
+    // `compileVue`; a transform that deleted a key in place would corrupt the
+    // descriptor a second parse would otherwise still be able to read.
+    const { template } = vue('<template lang="pug"><p/></template>');
+    const attrsBefore = { ...template?.attrs };
+
+    const out = transformTemplate(
+      template,
+      [
+        (block) => {
+          const { lang: _lang, ...rest } = block.attrs;
+          return { attrs: rest };
+        },
+      ],
+      scope
+    );
+
+    expect(out).toBe("<template><p/></template>");
+    expect(template?.attrs).toEqual(attrsBefore);
   });
 
   it("emits bare attributes for valueless flags so scoped round-trips", () => {
     const { styles } = vue(
       '<template><p/></template>\n<style scoped lang="less">.a{}</style>'
     );
-    const out = transformStyles(styles, [])[0] ?? "";
+    const out = transformStyles(styles, [], scope)[0] ?? "";
 
     expect(out).toContain(" scoped");
     expect(out).not.toContain("scoped=true");
@@ -121,7 +145,9 @@ describe("block transforms", () => {
       filename: "/project/src/App.vue",
     };
 
-    expect(transformStyles([block], [])[0]).toBe('<style data-x="a&quot;b">.a{}</style>');
+    expect(transformStyles([block], [], scope)[0]).toBe(
+      '<style data-x="a&quot;b">.a{}</style>'
+    );
   });
 
   it("does not leave a stray space before an attribute-less block tag", () => {
@@ -129,7 +155,7 @@ describe("block transforms", () => {
       "<template><p/></template>\n<script>export default {}</script>"
     );
 
-    expect(transformScript(script)).toBe("<script>export default {}</script>");
+    expect(transformScript(script, [], scope)).toBe("<script>export default {}</script>");
   });
 });
 

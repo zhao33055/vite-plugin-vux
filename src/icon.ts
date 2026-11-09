@@ -1,7 +1,8 @@
 import path from "node:path";
 
 import { exists, readDependencyFile } from "./utils/fs";
-import { getContent, type Block, type TransFormPlugin } from "./compiler";
+import type { BlockTransform } from "./contracts";
+import { patchTemplate } from "./template-patch";
 import type { Config } from "./types";
 
 /**
@@ -11,7 +12,7 @@ import type { Config } from "./types";
  * what this transform does - in the app's templates as well as in vux's own.
  */
 
-const X_ICON_RE = /<x-icon\b([^>]*?)\/>|<x-icon\b([^>]*?)>(?:[\s\S]*?<\/x-icon>)?/g;
+const X_ICON_RE = /<x-icon\b([^>]*?)\/>|<x-icon\b([^>]*?)>(?:[\s\S]*?<\/x-icon>)?/;
 
 export interface ParsedAttrs {
   [key: string]: string;
@@ -50,58 +51,58 @@ export function inlineXIcon(
   content: string,
   loadSvg: (type: string) => string | null
 ): string {
-  return content.replace(
-    X_ICON_RE,
-    (match, selfClosingAttrs?: string, pairedAttrs?: string) => {
-      const attrs = parseAttributes((selfClosingAttrs ?? pairedAttrs ?? "").trim());
+  return patchTemplate(content, [
+    {
+      pattern: X_ICON_RE,
+      replace: (match, [selfClosingAttrs, pairedAttrs]) => {
+        const attrs = parseAttributes((selfClosingAttrs ?? pairedAttrs ?? "").trim());
 
-      // A bound `:type` / `v-bind:type` is a runtime value - keep the component.
-      if (
-        attrs.type === undefined ||
-        attrs[":type"] !== undefined ||
-        attrs["v-bind:type"] !== undefined
-      ) {
-        return match;
-      }
+        // A bound `:type` / `v-bind:type` is a runtime value - keep the component.
+        if (
+          attrs.type === undefined ||
+          attrs[":type"] !== undefined ||
+          attrs["v-bind:type"] !== undefined
+        ) {
+          return match;
+        }
 
-      const svg = loadSvg(attrs.type);
-      if (svg === null) return match;
+        const svg = loadSvg(attrs.type);
+        if (svg === null) return match;
 
-      const size = attrs.size || "24";
-      const className = attrs.class
-        ? `vux-x-icon vux-x-icon-${attrs.type} ${attrs.class}`
-        : `vux-x-icon vux-x-icon-${attrs.type}`;
+        const size = attrs.size || "24";
+        const className = attrs.class
+          ? `vux-x-icon vux-x-icon-${attrs.type} ${attrs.class}`
+          : `vux-x-icon vux-x-icon-${attrs.type}`;
 
-      const extraAttrs = Object.entries(attrs)
-        .filter(
-          ([key]) =>
-            // `type` and `size` select the icon; they are not SVG attributes and
-            // must not end up on the emitted element.
-            key !== "class" &&
-            key !== "size" &&
-            key !== "type" &&
-            !key.startsWith(":") &&
-            !key.startsWith("v-bind:")
-        )
-        .map(([key, value]) => ` ${key}="${value}"`)
-        .join("");
+        const extraAttrs = Object.entries(attrs)
+          .filter(
+            ([key]) =>
+              // `type` and `size` select the icon; they are not SVG attributes and
+              // must not end up on the emitted element.
+              key !== "class" &&
+              key !== "size" &&
+              key !== "type" &&
+              !key.startsWith(":") &&
+              !key.startsWith("v-bind:")
+          )
+          .map(([key, value]) => ` ${key}="${value}"`)
+          .join("");
 
-      return svg
-        .replace('width="512"', `width="${size}"`)
-        .replace('height="512"', `height="${size}"`)
-        .replace("<svg", `<svg class="${className}"${extraAttrs}`);
-    }
-  );
+        return svg
+          .replace('width="512"', `width="${size}"`)
+          .replace('height="512"', `height="${size}"`)
+          .replace("<svg", `<svg class="${className}"${extraAttrs}`);
+      },
+    },
+  ]);
 }
 
-export function createXiconTransformPlugin(
-  name: string,
-  config: Config
-): TransFormPlugin {
+/** Reads an icon from the installed vux package, warning once per missing name. */
+function createIconLoader(config: Config): (type: string) => string | null {
   const iconsDir = path.resolve(config.root, "node_modules", "vux", "src", "icons");
   const missing = new Set<string>();
 
-  const loadSvg = (type: string): string | null => {
+  return (type) => {
     const svgPath = path.resolve(iconsDir, `${type}.svg`);
 
     if (!exists(svgPath)) {
@@ -116,17 +117,15 @@ export function createXiconTransformPlugin(
 
     return readDependencyFile(svgPath);
   };
+}
 
-  return {
-    name,
-    fn: (templateBlock: Block) => {
-      // Applies to every template: an un-inlined `<x-icon>` renders nothing at
-      // runtime no matter whose template it is in.
-      const content = inlineXIcon(getContent(templateBlock), loadSvg);
-      if (content === getContent(templateBlock)) return;
+export function createXiconTransform(config: Config): BlockTransform {
+  const loadSvg = createIconLoader(config);
 
-      templateBlock.content = content;
-      return templateBlock;
-    },
+  // No `scope` check on purpose: an un-inlined `<x-icon>` renders nothing at
+  // runtime no matter whose template it is in.
+  return (block) => {
+    const content = inlineXIcon(block.content, loadSvg);
+    return content === block.content ? undefined : { content };
   };
 }

@@ -1,3 +1,4 @@
+import { escapeRegExp } from "../utils/regexp";
 import { liftRequireImports } from "./cjs-to-esm";
 
 /**
@@ -33,10 +34,6 @@ export const BARE_COMPONENT_IMPORTS: ReadonlyArray<{
   { file: /vux\/src\/plugins\/alert\/util\.js$/, specifier: "../../components/alert" },
   { file: /vux\/src\/plugins\/toast\/index\.js$/, specifier: "../../components/toast" },
 ];
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 /**
  * Applies the extension fixes to a file's source.

@@ -110,14 +110,17 @@ Rewrites the content of `<style lang="less">` blocks before less runs. Only less
   name: "i18n",
   vuxStaticReplace: true,   // default: true
   vuxLocale: "zh-CN",       // default: "zh-CN"
+  vuxFunctionName: "$t",    // default: "$t"
 }
 ```
 
 With `vuxStaticReplace: true` (the default), the `$t('key')` calls inside **vux's own templates** are replaced with literals read from `vux/src/locales/all.yml`, keyed `vux.<component>.<key>`. That is what lets you use `actionsheet`, `datetime`, `toast` and friends without installing `vue-i18n` at all. Setting it to `false` keeps them as runtime lookups, so you do need `vue-i18n` with vux's locale file loaded.
 
-Your own `$t()` calls are never touched by default — only vux's strings are inlined, and only when the key is a plain string literal (`$t(item.label)` stays a runtime expression).
+`vuxFunctionName` sets the name those calls are matched against, for a build where vux's templates were preprocessed with a different translation helper.
 
-> The vux-loader options `functionName`, `vuxFunctionName`, `localeList`, `staticTranslations` and `staticReplace` are accepted and typed for compatibility, but the current implementation only ever replaces `$t()` inside the vux package. Do not rely on them yet.
+Your own `$t()` calls are never touched — only vux's strings are inlined, and only when the key is a plain string literal (`$t(item.label)` stays a runtime expression).
+
+> The vux-loader options `functionName`, `localeList`, `staticTranslations` and `staticReplace` all describe work on the **app's** own strings, which stays `vue-i18n`'s job under Vite. They are accepted and typed so a vux-loader config still compiles; set one and the build prints a warning instead of ignoring it.
 
 ### `<x-icon>`
 
@@ -132,12 +135,13 @@ A **static** `type` is required. A bound `:type` cannot be resolved at build tim
 
 ## What the plugin registers
 
-`vux()` returns three Vite plugins:
+`vux()` returns four Vite plugins:
 
 | Plugin                       | Phase  | Responsibility                                                                 |
 | ---------------------------- | ------ | ------------------------------------------------------------------------------ |
-| `vite-plugin-vux:sfc`        | `pre`  | Rewrites the raw SFC so `@vitejs/plugin-vue2` receives already-normalised blocks: drops `<template lang="...">` inside dependencies, discards `<i18n>` blocks from dependencies, inlines `<x-icon>`, statically resolves vux's `$t()` calls, applies `less-theme` / `style-parser`. Its `config()` hook adds `.vue` to `resolve.extensions`, sets less `paths` + `modifyVars`, lists `optimizeDeps.include` hints for vux's deeply-nested dependencies, and serves `vux-xscroll` from a bundled ESM copy through `\0`-prefixed virtual modules. |
-| `vite-plugin-vux:patches`    | `pre`  | Source-level fixes for the vux package: appends `/index.vue` to its extension-less component imports (also during esbuild pre-bundling, where Vite's resolvers never run), and hoists top-level `const x = require('…')` in files that mix ESM with `require()` — files Vite's CommonJS pass otherwise skips, because it ignores anything containing ESM syntax. Pure CommonJS files are deliberately left to Vite. |
+| `vite-plugin-vux:sfc`        | `pre`  | Rewrites the raw SFC so `@vitejs/plugin-vue2` receives already-normalised blocks: drops `<template lang="...">` inside dependencies, discards `<i18n>` blocks from dependencies, inlines `<x-icon>`, statically resolves vux's `$t()` calls, applies `less-theme` / `style-parser`. Its `config()` hook sets less `paths` + `modifyVars`, lists `optimizeDeps.include` hints for vux's deeply-nested dependencies, and serves `vux-xscroll` from a bundled ESM copy through `\0`-prefixed virtual modules. |
+| `vite-plugin-vux:patches`    | `pre`  | Source-level fixes for the vux package: hoists top-level `const x = require('…')` in files that mix ESM with `require()` — files Vite's CommonJS pass otherwise skips, because it ignores anything containing ESM syntax. Pure CommonJS files are deliberately left to Vite. |
+| `vite-plugin-vux:resolver`   | `post` | Resolves the extension-less relative imports inside vux (`import '../inline-desc'` → `…/index.vue`). Runs after Vite's own resolution and only for importers inside vux, so your project's `resolve.extensions` is left exactly as you set it. During esbuild pre-bundling, where no Vite resolver runs, the same fix is applied by an esbuild hook instead. |
 | `vite-plugin-vux:auto-import`| normal | Rewrites `import { X } from "vux"` into one default import per component (Babel AST, not string matching), and warns once per unknown name. |
 
 ## Migration from vux-loader
@@ -148,7 +152,7 @@ A **static** `type` is required. A bound `:type` cannot be resolved at build tim
 | `vux-loader` `css_match` / `.vue` style handling     | automatic; each component's own `<style>` compiles  |
 | `{ name: 'less-theme', path }`                       | identical shape inside `vux({ plugins: [...] })`    |
 | `{ name: 'style-parser', fn }`                       | identical shape                                     |
-| `{ name: 'i18n', vuxStaticReplace, vuxLocale }`      | identical shape                                     |
+| `{ name: 'i18n', vuxStaticReplace, vuxLocale }`      | identical shape, plus `vuxFunctionName`             |
 | `mapGet('vux/src/components/...')`                   | not needed — plain relative/specifier imports work  |
 | `vux/dist/vux.css` import for partial usage          | not needed; still available for full-style imports  |
 

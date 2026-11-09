@@ -32,13 +32,17 @@ export interface VuxI18nPlugin {
   vuxLocale?: string;
   /** Function name used inside vux templates. Defaults to `$t`. */
   vuxFunctionName?: string;
-  /** Function name used inside user templates. Defaults to `$t`. */
+  /**
+   * Accepted for vux-loader compatibility, with no effect under Vite: user
+   * strings are left to vue-i18n. A config that sets one of these four gets a
+   * warning at startup.
+   */
   functionName?: string;
-  /** Locales to precompile. Defaults to `["en", "zh-CN"]`. */
+  /** See `functionName`. */
   localeList?: string[];
-  /** User-project translations, keyed by locale then by key. */
+  /** See `functionName`. */
   staticTranslations?: Record<string, Record<string, string>>;
-  /** Statically replace `$t()` calls in user code as well. */
+  /** See `functionName`. */
   staticReplace?: boolean;
 }
 
@@ -50,15 +54,19 @@ export interface VuxOptions {
   plugins?: VuxPlugin[];
 }
 
-/** Options after defaults are applied; every field the transforms rely on. */
+/**
+ * Options after defaults are applied; every field the transforms rely on.
+ *
+ * Only the options the plugin actually implements appear here. The remaining
+ * `VuxI18nPlugin` fields exist for vux-loader config compatibility and are
+ * reported as unsupported instead.
+ */
 export interface ResolvedI18nOptions {
+  /** `true` when translations are left to vue-i18n at runtime. */
   dynamic: boolean;
   locale: string;
+  /** Name of the translation function inside vux's templates. */
   vuxFunctionName: string;
-  functionName: string;
-  langs: string[];
-  staticTranslations: Record<string, Record<string, string>>;
-  staticReplace: boolean;
 }
 
 export interface Config {

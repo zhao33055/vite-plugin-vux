@@ -66,7 +66,8 @@ export function isCompiledSfc(id: string, code: string): boolean {
   return isVueFile(filename) && !/^\s*</.test(code);
 }
 
-const VUX_RE = /node_modules[\\/]vux[\\/]/;
+/** Needs the same directory boundary as `NODE_MODULES_RE`: `my_node_modules/vux` is not the package. */
+const VUX_RE = /(^|[\\/])node_modules[\\/]vux[\\/]/;
 
 /** True for modules that come from the installed vux package itself. */
 export function inVux(id: string): boolean {

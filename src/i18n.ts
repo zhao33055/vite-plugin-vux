@@ -3,77 +3,43 @@ import path from "node:path";
 import yaml from "js-yaml";
 
 import { exists, readDependencyFile } from "./utils/fs";
-import {
-  getContent,
-  getFileName,
-  getType,
-  type Block,
-  type TransFormPlugin,
-} from "./compiler";
-import { findPlugin, type VuxI18nPlugin, type ResolvedI18nOptions } from "./vuxApi";
-import type { Config } from "./types";
+import { escapeRegExp } from "./utils/regexp";
+import type { BlockTransform } from "./contracts";
+import { literalFor, patchTemplate } from "./template-patch";
+import { findPlugin, type VuxI18nPlugin } from "./vuxApi";
+import type { Config, ResolvedI18nOptions } from "./types";
 
 /**
  * Statically resolves the `$t()` calls inside vux's own templates.
  *
  * vux expects vue-i18n to be installed; this plugin removes that requirement
  * by baking the translations from `vux/src/locales/all.yml` into the templates.
+ * Only vux's strings are touched - an app's own `$t()` calls belong to
+ * vue-i18n, and replacing them here would take the runtime locale away.
  */
 
 type LocaleTable = Record<string, Record<string, string>>;
 
-/** `$t("key")` / `$t('key')`, with optional surrounding whitespace. */
-const STATIC_T_RE = /\$t\(\s*(["'])((?:(?!\1)[^\\])*)\1\s*\)/g;
-
-/** `vux/<component>.<key>` is flattened in all.yml, e.g. `vux.actionsheet.cancel`. */
-const VUX_COMPONENT_RE = /vux[\\/]src[\\/]components[\\/]([^\\/]+)[\\/]/;
-
-export function getComponentName(id: string): string | undefined {
-  return VUX_COMPONENT_RE.exec(id)?.[1];
-}
-
 /**
- * Chooses a literal form that survives wherever the `$t()` call sat.
+ * Pattern for `fn("key")` / `fn('key')`, with optional surrounding whitespace.
  *
- * Inside a bound attribute the value is already delimited by quotes, so
- * `:data-confirm-text="$t('confirm_text')"` must not become
- * `:data-confirm-text=""确定""` - the template parser then reports the tag as
- * text outside the root element and drops it. Inside `{{ }}` a double-quoted
- * expression is what we want.
+ * The guard in front rejects `x$t(` and, for a renamed function such as `t`,
+ * the `$t(` it is a suffix of. It deliberately allows `.`, because
+ * `this.$t('key')` is a call worth replacing.
  */
-function translationLiteral(value: string, source: string, offset: number): string {
-  const before = source.slice(0, offset);
-  const openQuote = openAttributeQuote(before);
-
-  if (openQuote === '"') return quoteJsString(value, "'");
-  if (openQuote === "'") return quoteJsString(value, '"');
-  return JSON.stringify(value);
+function translationCall(functionName: string): RegExp {
+  return new RegExp(
+    `(?<![\\w$])${escapeRegExp(functionName)}\\(\\s*(["'])((?:(?!\\1)[^\\\\])*)\\1\\s*\\)`
+  );
 }
 
-/** The quote character of an attribute value `text` is currently inside. */
-function openAttributeQuote(text: string): '"' | "'" | undefined {
-  const tagStart = text.lastIndexOf("<");
-  if (tagStart === -1 || text.lastIndexOf(">") > tagStart) return undefined;
-
-  let open: '"' | "'" | undefined;
-  for (let i = tagStart + 1; i < text.length; i++) {
-    const char = text[i];
-    if (open) {
-      if (char === open) open = undefined;
-    } else if (char === '"' || char === "'") {
-      open = char;
-    }
-  }
-
-  return open;
-}
-
-function quoteJsString(value: string, quote: '"' | "'"): string {
-  const escaped = value
-    .replace(/\\/g, "\\\\")
-    .replace(new RegExp(quote, "g"), `\\${quote}`);
-
-  return `${quote}${escaped}${quote}`;
+export interface TranslationResolver {
+  /** Prefix for keys, e.g. `vux.actionsheet` produces `vux.actionsheet.cancel`. */
+  prefix: string;
+  lookup: (key: string) => string | undefined;
+  /** Name of the translation function; vux templates use `$t`. */
+  functionName?: string;
+  onMissing?: (key: string) => void;
 }
 
 /**
@@ -85,27 +51,26 @@ function quoteJsString(value: string, quote: '"' | "'"): string {
  */
 export function resolveStaticTranslations(
   content: string,
-  options: {
-    /** Prefix for keys, e.g. `vux.actionsheet` produces `vux.actionsheet.cancel`. */
-    prefix: string;
-    lookup: (key: string) => string | undefined;
-    onMissing?: (key: string) => void;
-  }
+  options: TranslationResolver
 ): string {
-  return content.replace(
-    STATIC_T_RE,
-    (match, _quote: string, key: string, offset: number, source: string) => {
-      const fullKey = `${options.prefix}.${key}`;
-      const translated = options.lookup(fullKey);
+  return patchTemplate(content, [
+    {
+      pattern: translationCall(options.functionName ?? "$t"),
+      replace: (match, [, key], context) => {
+        if (key === undefined) return match;
 
-      if (translated === undefined) {
-        options.onMissing?.(fullKey);
-        return match;
-      }
+        const fullKey = `${options.prefix}.${key}`;
+        const translated = options.lookup(fullKey);
 
-      return translationLiteral(translated, source, offset);
-    }
-  );
+        if (translated === undefined) {
+          options.onMissing?.(fullKey);
+          return match;
+        }
+
+        return literalFor(translated, context);
+      },
+    },
+  ]);
 }
 
 function loadLocales(root: string): LocaleTable | null {
@@ -137,7 +102,14 @@ function loadLocales(root: string): LocaleTable | null {
   return parsed as LocaleTable;
 }
 
-/** Applies option defaults and maps the legacy vux-loader names. */
+/**
+ * Applies option defaults and maps the legacy vux-loader names.
+ *
+ * The options with no counterpart under Vite (`functionName`, `localeList`,
+ * `staticTranslations`, `staticReplace`) are deliberately absent: they are
+ * reported by `warnUnsupportedOptions` in `./index` instead of being resolved
+ * into values nothing reads.
+ */
 export function resolveI18nOptions(plugin?: VuxI18nPlugin): ResolvedI18nOptions {
   return {
     // vux-loader spells this `vuxStaticReplace`; static replacement is the
@@ -145,70 +117,45 @@ export function resolveI18nOptions(plugin?: VuxI18nPlugin): ResolvedI18nOptions 
     dynamic: plugin?.vuxStaticReplace === false,
     locale: plugin?.vuxLocale ?? "zh-CN",
     vuxFunctionName: plugin?.vuxFunctionName ?? "$t",
-    functionName: plugin?.functionName ?? "$t",
-    langs: plugin?.localeList ?? ["en", "zh-CN"],
-    staticTranslations: plugin?.staticTranslations ?? {},
-    staticReplace: plugin?.staticReplace ?? false,
   };
 }
 
-export function createI18nTransformPluginFor$t(
-  name: string,
-  config: Config
-): TransFormPlugin {
+export function createI18nTransform(config: Config): BlockTransform {
   const options = resolveI18nOptions(findPlugin<VuxI18nPlugin>(config.plugins, "i18n"));
   const locales = options.dynamic ? null : loadLocales(config.root);
   const warned = new Set<string>();
 
   const lookup = (key: string): string | undefined => locales?.[options.locale]?.[key];
 
-  return {
-    name,
-    fn: (template: Block) => {
-      if (!locales) return;
+  return (block, scope) => {
+    // `scope.component` is only set for a file inside `vux/src/components`, so
+    // an app's templates keep using vue-i18n, which is the point.
+    if (!locales || !scope.component) return;
 
-      const filename = getFileName(template);
-      const component = getComponentName(filename);
-      if (!component) return;
+    const content = resolveStaticTranslations(block.content, {
+      prefix: `vux.${scope.component}`,
+      functionName: options.vuxFunctionName,
+      lookup,
+      onMissing: (key) => {
+        if (warned.has(key)) return;
+        warned.add(key);
+        console.warn(
+          `[vite-plugin-vux] no "${options.locale}" translation for "${key}" in vux locales; left as a runtime lookup.`
+        );
+      },
+    });
 
-      template.content = resolveStaticTranslations(getContent(template), {
-        prefix: `vux.${component}`,
-        lookup,
-        onMissing: (key) => {
-          if (warned.has(key)) return;
-          warned.add(key);
-          console.warn(
-            `[vite-plugin-vux] no "${options.locale}" translation for "${key}" in vux locales; left as a runtime lookup.`
-          );
-        },
-      });
-
-      return template;
-    },
+    return content === block.content ? undefined : { content };
   };
 }
 
 /**
  * Drops `<i18n>` custom blocks from vux components: they are only meaningful to
  * `vue-i18n-loader`, which Vite never runs.
- *
- * `config` is unused here but kept so every block-transform factory shares one
- * signature.
  */
-export function createI18nTransformPluginForCustomBlock(
-  name: string,
-  _config: Config
-): TransFormPlugin {
-  return {
-    name,
-    fn: (customBlock: Block) => {
-      if (
-        getFileName(customBlock).includes("node_modules") &&
-        getType(customBlock) === "i18n"
-      ) {
-        customBlock.destroyed = true;
-        return customBlock;
-      }
-    },
+export function createI18nCustomBlockTransform(): BlockTransform {
+  return (block, scope) => {
+    if (!scope.inNodeModules || block.type !== "i18n") return;
+    return { drop: true };
   };
 }

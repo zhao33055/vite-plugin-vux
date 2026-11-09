@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { inlineXIcon, parseAttributes } from "../src/icon";
-import { getComponentName } from "../src/i18n";
+import { createXiconTransform, inlineXIcon, parseAttributes } from "../src/icon";
+import { NO_SCOPE, type BlockView } from "../src/contracts";
+import type { Config } from "../src/types";
 
 const fakeSvg = (type: string) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><path d="M${type}" /></svg>`;
@@ -101,26 +102,36 @@ describe("inlineXIcon", () => {
   });
 });
 
-describe("getComponentName", () => {
-  it("derives the component name from a posix path", () => {
-    expect(
-      getComponentName("/app/node_modules/vux/src/components/actionsheet/index.vue")
-    ).toBe("actionsheet");
+describe("x-icon transform", () => {
+  /** Reads the real `vux/src/icons` of the installed package. */
+  const config: Config = {
+    root: process.cwd(),
+    ssr: false,
+    componentMap: {},
+    plugins: [],
+  };
+
+  function run(content: string, filename = "/app/src/pages/Home.vue") {
+    const block: BlockView = { type: "template", filename, content, attrs: {} };
+    // Scope deliberately says "the app's own file": icons are inlined everywhere.
+    return createXiconTransform(config)(block, NO_SCOPE);
+  }
+
+  it("reports the inlined markup as a patch", () => {
+    const patch = run('<div><x-icon type="ios-arrow-up"></x-icon></div>');
+
+    expect(patch?.content).toContain("vux-x-icon-ios-arrow-up");
+    expect(patch?.content).not.toContain("<x-icon");
   });
 
-  it("derives the component name from a windows path", () => {
-    expect(
-      getComponentName("C:\\app\\node_modules\\vux\\src\\components\\x-input\\index.vue")
-    ).toBe("x-input");
+  it("says nothing when the template has no icons", () => {
+    // The pipeline uses "no patch" to skip re-serialising a block.
+    expect(run("<div>plain markup</div>")).toBeUndefined();
   });
 
-  it("is not fooled by user components folders that contain the word components", () => {
-    expect(
-      getComponentName("/app/src/components/actionsheet/Button.vue")
-    ).toBeUndefined();
-  });
+  it("keeps a bound type as a component call", () => {
+    const patch = run('<x-icon :type="current"></x-icon>');
 
-  it("returns undefined for user project files", () => {
-    expect(getComponentName("/app/src/App.vue")).toBeUndefined();
+    expect(patch).toBeUndefined();
   });
 });
