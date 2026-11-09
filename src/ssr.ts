@@ -1,26 +1,22 @@
-import { type Config } from "./index";
 import { removeTag, reserveTag } from "./dom";
-import { 
-  type Block, 
-  type TransFormPlugin, 
-  getContent 
-} from "./compiler";
+import { getContent, type Block, type TransFormPlugin } from "./compiler";
+import type { Config } from "./types";
 
+/**
+ * Strips the branch of a template that does not apply to the current rendering
+ * mode, using Vue 2's `<v-ssr>` / `<v-no-ssr>` tags.
+ */
 export function createSsrTransformPlugin(name: string, config: Config): TransFormPlugin {
-  const ssr = config.ssr;
+  const { ssr } = config;
 
   return {
-    name: name,
+    name,
     fn: (block: Block) => {
-      const content = getContent(block);
-      const [remove, reserve] = ssr 
-        ? ["v-no-ssr", "v-ssr"]
-        : ["v-ssr", "v-no-ssr"];
+      // SSR builds keep `<v-ssr>` and drop `<v-no-ssr>`; client-side is reversed.
+      const [remove, reserve] = ssr ? ["v-no-ssr", "v-ssr"] : ["v-ssr", "v-no-ssr"];
 
-      const newContent = reserveTag(removeTag(content, remove), reserve);
-      block.content = newContent;
-
+      block.content = reserveTag(removeTag(getContent(block), remove), reserve);
       return block;
-    }
-  }
+    },
+  };
 }

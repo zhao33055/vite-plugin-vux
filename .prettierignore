@@ -1,0 +1,7 @@
+dist
+node_modules
+playground/node_modules
+pnpm-lock.yaml
+src/libs
+README.md
+README.zh-CN.md

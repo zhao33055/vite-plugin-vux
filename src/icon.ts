@@ -1,125 +1,132 @@
 import path from "node:path";
-import fs from "node:fs";
 
-import { type Config } from "./index";
-import { getAttrs, getContent, getFileName, type Block } from "./compiler";
+import { exists, readFileSyncCached } from "./utils/fs";
+import { getContent, type Block, type TransFormPlugin } from "./compiler";
+import type { Config } from "./types";
 
-function replaceEnd(str: string, name: string) {
-  const list = str.split('');
+/**
+ * `<x-icon>` has no runtime implementation: `vux/src/components/x-icon/` ships
+ * a `metas.yml` and nothing else, and the name is absent from `map.json`. The
+ * tag only works because vux-loader replaces it with inline SVG markup, which is
+ * what this transform does - in the app's templates as well as in vux's own.
+ */
 
-  let start = false
-  let end = false
-  for (let i = 0; i < list.length; i++) {
-    if (list[i] === '<' && list[i + 1] !== '/') {
-      if (list.slice(i + 1, i + 1 + name.length).join('') === name) {
-        start = true
-      } else {
-        start = false
+const X_ICON_RE = /<x-icon\b([^>]*?)\/>|<x-icon\b([^>]*?)>(?:[\s\S]*?<\/x-icon>)?/g;
+
+export interface ParsedAttrs {
+  [key: string]: string;
+}
+
+/**
+ * Parses an HTML attribute list.
+ *
+ * Returns an empty object when there are no attributes - the previous
+ * implementation called `.map` on a `null` `String#match` result and threw for
+ * `<x-icon></x-icon>`.
+ */
+export function parseAttributes(source: string): ParsedAttrs {
+  const attrs: ParsedAttrs = {};
+  const re = /([\w:.\-@!#]+)(?:\s*=\s*"([^"]*)")?/g;
+
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(source)) !== null) {
+    const [, rawName, value = ""] = match;
+    // vux binds native listeners with `v-on:click.native`; the modifier is
+    // meaningless once the icon is plain markup.
+    const name = rawName.replace(/\.native$/, "");
+    attrs[name] = value;
+  }
+
+  return attrs;
+}
+
+/**
+ * Inlines every static `<x-icon type="...">` occurrence.
+ *
+ * Icons whose `type` is bound (`:type="foo"`) cannot be resolved at build time
+ * and are left untouched so the runtime component can still handle them.
+ */
+export function inlineXIcon(
+  content: string,
+  loadSvg: (type: string) => string | null
+): string {
+  return content.replace(
+    X_ICON_RE,
+    (match, selfClosingAttrs?: string, pairedAttrs?: string) => {
+      const attrs = parseAttributes((selfClosingAttrs ?? pairedAttrs ?? "").trim());
+
+      // A bound `:type` / `v-bind:type` is a runtime value - keep the component.
+      if (
+        attrs.type === undefined ||
+        attrs[":type"] !== undefined ||
+        attrs["v-bind:type"] !== undefined
+      ) {
+        return match;
       }
+
+      const svg = loadSvg(attrs.type);
+      if (svg === null) return match;
+
+      const size = attrs.size || "24";
+      const className = attrs.class
+        ? `vux-x-icon vux-x-icon-${attrs.type} ${attrs.class}`
+        : `vux-x-icon vux-x-icon-${attrs.type}`;
+
+      const extraAttrs = Object.entries(attrs)
+        .filter(
+          ([key]) =>
+            // `type` and `size` select the icon; they are not SVG attributes and
+            // must not end up on the emitted element.
+            key !== "class" &&
+            key !== "size" &&
+            key !== "type" &&
+            !key.startsWith(":") &&
+            !key.startsWith("v-bind:")
+        )
+        .map(([key, value]) => ` ${key}="${value}"`)
+        .join("");
+
+      return svg
+        .replace('width="512"', `width="${size}"`)
+        .replace('height="512"', `height="${size}"`)
+        .replace("<svg", `<svg class="${className}"${extraAttrs}`);
     }
-    if (list[i] === '/' && list[i + 1] === '>') {
-      if (start) {
-        end = true
-        list[i] = 'V'
-        list[i + 1] = 'V'
+  );
+}
+
+export function createXiconTransformPlugin(
+  name: string,
+  config: Config
+): TransFormPlugin {
+  const iconsDir = path.resolve(config.root, "node_modules", "vux", "src", "icons");
+  const missing = new Set<string>();
+
+  const loadSvg = (type: string): string | null => {
+    const svgPath = path.resolve(iconsDir, `${type}.svg`);
+
+    if (!exists(svgPath)) {
+      if (!missing.has(type)) {
+        missing.add(type);
+        console.warn(
+          `[vite-plugin-vux] vux icon "${type}" not found in ${iconsDir}, leaving <x-icon> as-is.`
+        );
       }
-    }
-  }
-
-  return list.join('').replace(/VV/g, `></${name}>`)
-}
-
-function getAttributes (string: string) {
-  let match = string.match(/\s+(.*?)="(.*?)"/g)
-
-  let obj = {}
-  let list = match.map(one => {
-    return one.replace(/^\s+|\s+$/g, '').replace(/\.native/g, '')
-  })
-
-  for (let i = 0; i < list.length; i++) {
-    const pair = list[i].split('=').map(one => {
-      return one.replace(/"/g, '')
-    })
-    if (pair.length === 2) {
-      obj[pair[0]] = pair[1]
-    } else if (pair.length > 2) {
-      obj[pair[0]] = pair.slice(1).join('=')
+      return null;
     }
 
-  }
-  return {
-    stringList: list.join(' '),
-    arrayList: list,
-    objectList: obj
-  }
-}
-
-function updateAttrs(attrs, svgDirir: string) {
-  const size = attrs.objectList.size || 24;
-  const type = attrs.objectList.type;
-  const className = !attrs.objectList.class 
-    ? `vux-x-icon vux-x-icon-${type}`
-    : `vux-x-icon vux-x-icon-${type} ${attrs.objectList.class}`;
-  const props = 
-    Object
-    .entries(attrs.objectList)
-    .reduce((acc, cur) => {
-      const [key, value] = cur;
-      return key !== "class" 
-        ? acc + ` ${key}="${value}"`
-        : acc
-    }, "");
-
-  const svgPath = path.resolve(svgDirir, `${type}.svg`);
-  return fs.readFileSync(svgPath, "utf8")
-    .replace(`width="512"`, `width="${size}"`)
-    .replace(`height="512"`, `height="${size}"`)
-    .replace(`<svg`, `<svg class="${className}" ${props}`);
-}
-
-export function createXiconTransformPlugin(name: string, config: Config) {
-  const svgDir = path.resolve(config.root, "node_modules", "vux/src/icons");
-  const reg1 = new RegExp(`<x-icon([\\s\\S]*?)>.*?</x-icon>`, "g");
-  const reg2 = new RegExp(`<x-icon([\\s\\S]*?)\/>`, 'g');
+    return readFileSyncCached(svgPath);
+  };
 
   return {
-    name: name,
+    name,
     fn: (templateBlock: Block) => {
-      const content = getContent(templateBlock);
+      // Applies to every template: an un-inlined `<x-icon>` renders nothing at
+      // runtime no matter whose template it is in.
+      const content = inlineXIcon(getContent(templateBlock), loadSvg);
+      if (content === getContent(templateBlock)) return;
 
-      const newContent = replaceEnd(content, "x-icon")
-        .replace(reg1, (match, p1) => {
-          const attrs = getAttributes(p1);
-          return updateAttrs(attrs, svgDir);
-        })
-        .replace(reg2, (match, p1) => {
-          const attrs = getAttributes(p1);
-          return updateAttrs(attrs, svgDir);
-        });
-
-      templateBlock.content = newContent;
-
+      templateBlock.content = content;
       return templateBlock;
-    }
-  }
-}
-
-export function createTemplateAtrrsTransformPlugin(name: string, config: Config) {
-  return {
-    name: name,
-    fn: (template: Block) => {
-      const filename = getFileName(template);
-      if(filename.includes("node_modules/vux")) {
-        const attrs = getAttrs(template);
-        if(attrs["lang"]) {
-          delete attrs["lang"];
-        }
-
-        template.attrs = attrs;
-
-        return template;
-      }
-    }
-  }
+    },
+  };
 }

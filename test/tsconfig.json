@@ -1,0 +1,12 @@
+{
+  // Editor/test project. Editors resolve a file to the closest `tsconfig.json`
+  // walking upwards, so without this file the specs fall back to an inferred
+  // project with no Node types and `process.cwd()` is reported as unknown.
+  // `pnpm typecheck` still uses the root `tsconfig.test.json`.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".."
+  },
+  "include": ["./**/*.ts", "../src"]
+}

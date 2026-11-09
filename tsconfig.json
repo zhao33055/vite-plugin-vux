@@ -2,17 +2,22 @@
   "compilerOptions": {
     "module": "ESNext",
     "target": "ESNext",
-    "moduleResolution": "node",
+    // `node` (node10) is deprecated and stops working in TypeScript 7. Rollup
+    // does the actual bundling, so the modern bundler strategy is the accurate
+    // one here and it keeps package.json `exports` resolution working.
+    "moduleResolution": "bundler",
     "esModuleInterop": true,
-    "strict": false,
+    "strict": true,
     "skipLibCheck": true,
     "outDir": "./dist",
     "resolveJsonModule": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": false,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
     "allowSyntheticDefaultImports": true
   },
-  "include": [
-    "src",
-    "rollup.config.ts"
-  ],
-  "exclude": ["node_modules", "dist"],
+  "include": ["src", "rollup.config.ts"],
+  "exclude": ["node_modules", "dist"]
 }

@@ -1,0 +1,14 @@
+// Fixture theme file exercising the less variable parser.
+@import "./theme-partial.less";
+
+// a line comment that must be ignored
+@color: #2d8cf0;
+@gap: 10px; /* trailing block comment */
+@weui-cell__bd__font-size: 14px;
+@bad name with spaces: 1px;
+
+// A rule body must never be mistaken for a variable declaration: the
+// `color: red` below used to silently overwrite `@color`.
+.ignored-selector {
+  color: red;
+}

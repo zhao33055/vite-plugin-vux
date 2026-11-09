@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Lint, typecheck, test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      # A failure on one Node version should not hide the result of another.
+      fail-fast: false
+      matrix:
+        # 18 is the floor declared in `engines`; 20 and 22 cover the Vite
+        # versions the package declares as peers.
+        node: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Format
+        run: pnpm run format:check
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm run test
+
+      - name: Build
+        run: pnpm run build
+
+  playground:
+    # End-to-end check against a real Vite app and a real vux release. The unit
+    # tests cover the transforms; only a build catches resolver and ordering
+    # regressions. The playground pins an older vux than the root devDependency
+    # on purpose, so both ends of the supported range are exercised.
+    name: Playground build (vux 2.9.x)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: playground/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm -C playground install --frozen-lockfile
+
+      - name: Build
+        run: pnpm -C playground run build

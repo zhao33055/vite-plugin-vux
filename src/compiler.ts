@@ -1,64 +1,108 @@
-import { type SFCBlock, type SFCDescriptor } from "vue/compiler-sfc";
+import type { SFCBlock, SFCDescriptor } from "vue/compiler-sfc";
 
 import { tryRequire } from "./utils/module";
 
-export interface Block extends SFCBlock {
+/**
+ * A single SFC block, tagged with the file it came from so that transform
+ * plugins can decide whether a block belongs to vux or to user code.
+ */
+export interface Block extends Omit<SFCBlock, "start" | "end"> {
   filename: string;
-  destory?: boolean;
+  /** Set by a plugin to drop the block from the generated output entirely. */
+  destroyed?: boolean;
+  /**
+   * Source offsets. The parser always fills these in, but a block only needs
+   * `type`, `content` and `attrs` to be re-serialised, so they stay optional.
+   */
+  start?: number;
+  end?: number;
 }
 
 export interface TransFormPlugin {
-  name: string,
-  fn: (block: Block) => Block | void | null | undefined; 
+  name: string;
+  fn: (block: Block) => Block | void | null | undefined;
 }
 
-let compiler;
+/** A parsed SFC descriptor, as produced by `vue/compiler-sfc`. */
+export interface SfcCompiler {
+  parse(options: {
+    filename: string;
+    source: string;
+    sourceMap?: boolean;
+  }): SFCDescriptor;
+}
 
-function getCompiler() {
-  if(!compiler) {
+/**
+ * Resolves `vue/compiler-sfc` from the user's project rather than from this
+ * plugin's own dependencies, so the plugin always compiles with the same Vue
+ * version the app uses.
+ *
+ * The compiler is returned to the caller instead of being held in a module
+ * level variable: a module singleton leaks state between concurrent dev
+ * servers and between test cases.
+ */
+export function resolveCompiler(root: string): SfcCompiler {
+  const compiler =
+    tryRequire<SfcCompiler>("vue/compiler-sfc", root) ??
+    tryRequire<SfcCompiler>("vue/compiler-sfc");
+
+  if (!compiler) {
     throw new Error(
-      `compiler is null.` +
-        `please load compiler.`
-    )
+      `[vite-plugin-vux] Failed to resolve vue/compiler-sfc from "${root}".\n` +
+        `vite-plugin-vux requires vue (>=2.7.0) to be present in the dependency tree.`
+    );
   }
 
   return compiler;
 }
 
-export function getType(block: Block) {
+export function getType(block: Block): string {
   return block.type;
 }
 
-export function getFileName(block: Block) {
+export function getFileName(block: Block): string {
   return block.filename;
 }
 
-export function getAttrs(block: Block) {
+export function getAttrs(block: Block): Record<string, string | true> {
   return block.attrs;
 }
 
-export function transferAttrs(attrs) {
-  return Object.entries(attrs)
-}
-
-export function getContent(block: Block) {
+export function getContent(block: Block): string {
   return block.content;
 }
 
-function attrsToString(attrs: [string, string | true][]) {
-  return attrs.map(([key, value]) => ` ${key}="${value}"`).join("");
+function escapeAttrValue(value: string | true): string {
+  return value === true ? "" : String(value).replace(/"/g, "&quot;");
 }
 
-function transformBlockWithPlugins(block: Block, plugins: TransFormPlugin[] = []) {
-  return plugins.reduce((acc, cur) => {
-    if(!cur || typeof cur.fn !== "function") {
+function attrsToString(attrs: Record<string, string | true>): string {
+  return Object.entries(attrs)
+    .map(([key, value]) =>
+      // Vue 2.7 normalises bare attributes to `true`, so emitting `scoped`
+      // instead of `scoped="true"` round-trips correctly.
+      value === true ? ` ${key}` : ` ${key}="${escapeAttrValue(value)}"`
+    )
+    .join("");
+}
+
+/** A block that survived the pipeline, or `""` when a plugin dropped it. */
+type TransformedBlock = Block | "";
+
+function transformBlockWithPlugins(
+  block: Block,
+  plugins: TransFormPlugin[] = []
+): TransformedBlock {
+  return plugins.reduce<TransformedBlock>((acc, plugin) => {
+    if (!plugin || typeof plugin.fn !== "function") {
       return acc;
     }
-    
-    const result = cur.fn(acc);
-    if(!result) {
+
+    const result = plugin.fn(acc as Block);
+    if (!result) {
       return acc;
-    } else if(result.destory) {
+    }
+    if (result.destroyed) {
       return "";
     }
 
@@ -66,108 +110,94 @@ function transformBlockWithPlugins(block: Block, plugins: TransFormPlugin[] = []
   }, block);
 }
 
-export function initCompiler(root: string) {
-  compiler = tryRequire('vue/compiler-sfc', root) || tryRequire('vue/compiler-sfc');
+function blockToCode(block: Block | ""): string {
+  if (!block) return "";
 
-  if (!compiler) {
-    throw new Error(
-      `Failed to resolve vue/compiler-sfc.\n` +
-        `@vitejs/plugin-vue2 requires vue (>=2.7.0) ` +
-        `to be present in the dependency tree.`
-    )
-  }
+  const attrs = attrsToString(getAttrs(block));
+  return `<${getType(block)}${attrs}>${getContent(block)}</${getType(block)}>`;
 }
 
-export function compileVue(filename: string, source: string, sourceMap: boolean = true) {
-  const compiler = getCompiler();
-  const descriptor = compiler.parse({
-    filename,
-    source,
-    sourceMap
-  }) as SFCDescriptor;
-
-  const template = descriptor.template as Block;
-  if(template) {
-    template.filename = filename;
-  }
-
-  const script = descriptor.script as Block;
-  if(script) {
-    script.filename = filename;
-  }
-
-  const styles = descriptor.styles
-    .filter(style => style !== null)
-    .map(style => ({...style, filename})) as Block[];
-
-  const customBlocks = descriptor.customBlocks
-    .filter(customBlock => customBlock !== null)
-    .map(customBlock => ({...customBlock, filename})) as Block[];
-
-  return {
-    template,
-    script,
-    styles,
-    customBlocks,
-  }
+export interface CompiledVue {
+  template?: Block;
+  script?: Block;
+  styles: Block[];
+  customBlocks: Block[];
 }
 
-function transfomBlockToCode(block: Block) {
-  if(!block) return "";
+export function compileVue(
+  compiler: SfcCompiler,
+  filename: string,
+  source: string,
+  sourceMap = true
+): CompiledVue {
+  const descriptor = compiler.parse({ filename, source, sourceMap });
 
-  const type = getType(block);
-  const content = getContent(block);
-  const attrsStr = attrsToString(Object.entries(getAttrs(block)));
+  const template = descriptor.template
+    ? ({ ...descriptor.template, filename } as Block)
+    : undefined;
 
-  return `<${type} ${attrsStr}>${content}</${type}>`
+  const script = descriptor.script
+    ? ({ ...descriptor.script, filename } as Block)
+    : undefined;
+
+  const styles = (descriptor.styles ?? [])
+    .filter((style): style is SFCBlock => style !== null && style !== undefined)
+    .map((style) => ({ ...style, filename }) as Block);
+
+  const customBlocks = (descriptor.customBlocks ?? [])
+    .filter((block): block is SFCBlock => block !== null && block !== undefined)
+    .map((block) => ({ ...block, filename }) as Block);
+
+  return { template, script, styles, customBlocks };
 }
 
-export function transformTemplate(template: Block, plugins: TransFormPlugin[] = []) {
-  if(!template) return "";
-
-  const newTemplate = transformBlockWithPlugins(template, plugins);
-  return transfomBlockToCode(newTemplate as Block);
+export function transformTemplate(
+  template: Block | undefined,
+  plugins: TransFormPlugin[] = []
+): string {
+  if (!template) return "";
+  return blockToCode(transformBlockWithPlugins(template, plugins));
 }
 
-export function transformScript(script: Block, plugins: TransFormPlugin[] = []) {
-  if(!script) return "";
-
-  const newScript = transformBlockWithPlugins(script, plugins);
-  return transfomBlockToCode(newScript as Block)
+export function transformScript(
+  script: Block | undefined,
+  plugins: TransFormPlugin[] = []
+): string {
+  if (!script) return "";
+  return blockToCode(transformBlockWithPlugins(script, plugins));
 }
 
-export function transformStyles(styles: Block[], plugins: TransFormPlugin[] = []) {
-  if(!styles.length) return [];
-
-  return styles.reduce((acc, styleBlock) => {
+export function transformStyles(
+  styles: Block[],
+  plugins: TransFormPlugin[] = []
+): string[] {
+  return styles.reduce<string[]>((acc, styleBlock) => {
     const newStyleBlock = transformBlockWithPlugins(styleBlock, plugins);
-
-    if(newStyleBlock) {
-      acc.push(transfomBlockToCode(newStyleBlock));
+    if (newStyleBlock) {
+      acc.push(blockToCode(newStyleBlock));
     }
-
     return acc;
   }, []);
 }
 
-export function transformCustomBlocks(customBlocks: Block[], plugins: TransFormPlugin[] = []) {
-  if(!customBlocks.length) return [];
-
-  return customBlocks.reduce((acc, customBlock) => {
+export function transformCustomBlocks(
+  customBlocks: Block[],
+  plugins: TransFormPlugin[] = []
+): string[] {
+  return customBlocks.reduce<string[]>((acc, customBlock) => {
     const newCustomBlock = transformBlockWithPlugins(customBlock, plugins);
+    if (!newCustomBlock) return acc;
 
-    if(!newCustomBlock) return acc;
-
-    acc.push(transfomBlockToCode(newCustomBlock));
-
-    return acc
+    acc.push(blockToCode(newCustomBlock));
+    return acc;
   }, []);
 }
 
-export function generateVue(template: string, script: string, styles: string[], customBlocks: string[]) {
+export function generateVue(
+  template: string,
+  script: string,
+  styles: string[],
+  customBlocks: string[]
+): string {
   return [template, script, ...styles, ...customBlocks].join("");
-}
-
-export function createTransformPlugin(name: string, fn: (block: Block) => void|null|undefined): TransFormPlugin {
-  return { name, fn }
 }
