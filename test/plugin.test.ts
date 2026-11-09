@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import vux, { createVuxContext } from "../src/index";
 
@@ -25,22 +25,25 @@ describe("plugin factory", () => {
   it("can be called with no options, as the README documents", () => {
     // Regression: `options.plugins` was read off an undefined `options`.
     expect(() => vux()).not.toThrowError();
-    expect(vux()).toHaveLength(3);
+    expect(vux()).toHaveLength(4);
   });
 
-  it("registers the three plugins in the required order", () => {
+  it("registers the plugins in the required order", () => {
     expect(vux().map((p) => p.name)).toEqual([
       "vite-plugin-vux:sfc",
       "vite-plugin-vux:patches",
+      "vite-plugin-vux:resolver",
       "vite-plugin-vux:auto-import",
     ]);
   });
 
   it("puts the SFC and patch plugins before the vue plugin", () => {
-    const [sfc, patches, autoImport] = vux();
+    const [sfc, patches, resolver, autoImport] = vux();
 
     expect(sfc.enforce).toBe("pre");
     expect(patches.enforce).toBe("pre");
+    // The resolver has to come after Vite's own: it only handles what is left.
+    expect(resolver.enforce).toBe("post");
     expect(autoImport.enforce).toBeUndefined();
   });
 
@@ -49,20 +52,29 @@ describe("plugin factory", () => {
     const hook = sfc.config as (this: unknown, c: unknown) => Record<string, any>;
     const result = hook.call({}, {});
 
-    // `.vue` has to be *added* to Vite's defaults, not swapped in for them:
-    // replacing the list breaks extension-less .ts/.tsx/.jsx/.json imports.
-    expect(result.resolve.extensions).toEqual([
-      ".mjs",
-      ".js",
-      ".mts",
-      ".ts",
-      ".jsx",
-      ".tsx",
-      ".json",
-      ".vue",
-    ]);
+    // The plugin must not touch module resolution for the host project at all:
+    // adding `.vue` to `resolve.extensions` changes how *their* `./x` imports
+    // resolve. vux-internal extension-less imports are the resolver plugin's job.
+    expect(result.resolve).toBeUndefined();
     expect(result.css.preprocessorOptions.less.paths[0]).toMatch(/styles$/);
     expect(result.optimizeDeps.include).toContain("vux > big.js");
+  });
+
+  it("warns about i18n options that are accepted but not implemented", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const plugins = vux({
+      plugins: [{ name: "i18n", staticReplace: true, functionName: "$tt" }],
+    });
+    const config = plugins[0].config as (this: unknown, c: unknown) => unknown;
+
+    config.call({}, {});
+
+    const message = warn.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(message).toMatch(/staticReplace/);
+    expect(message).toMatch(/functionName/);
+    // An option that does work must not appear in the complaint.
+    expect(message).not.toMatch(/vuxLocale/);
+    warn.mockRestore();
   });
 
   it("resolves the component map against vite's root, not the cwd", () => {
@@ -194,20 +206,26 @@ describe("SFC transform on real vux sources", () => {
 describe("vux source patches", () => {
   const patches = pluginByName("vite-plugin-vux:patches");
 
-  it("adds the .vue extension to vux's extension-less imports", () => {
-    const id = "/app/node_modules/vux/src/plugins/loading/index.js";
-    const out = transform(patches, `import C from '../../components/loading'`, id);
+  it("hoists require() out of the files that mix ESM and CommonJS", () => {
+    const id = "/app/node_modules/vux/src/components/picker/scroller.js";
+    const code = [
+      "const Animate = require('./animate')",
+      "export default { created() { Animate.run() } }",
+    ].join("\n");
 
-    expect((out as { code: string }).code).toContain(
-      "../../components/loading/index.vue"
-    );
+    const out = transform(patches, code, id) as { code: string };
+
+    expect(out.code).toContain("import Animate from './animate'");
   });
 
   it("matches windows-style ids, which the previous string compare never did", () => {
-    const id = "C:\\app\\node_modules\\vux\\src\\plugins\\loading\\index.js";
-    const out = transform(patches, `import C from '../../components/loading'`, id);
+    const id = "C:\\app\\node_modules\\vux\\src\\components\\picker\\scroller.js";
 
-    expect((out as { code: string }).code).toContain("/index.vue");
+    const out = transform(patches, "const a = require('./a')\nexport default {}", id) as {
+      code: string;
+    };
+
+    expect(out.code).toContain("import a from './a'");
   });
 
   it("ignores user files and assets", () => {
@@ -215,6 +233,89 @@ describe("vux source patches", () => {
     expect(transform(patches, ".a{}", "/app/node_modules/vux/src/styles/a.less")).toBe(
       null
     );
+  });
+});
+
+describe("extension-less imports inside vux", () => {
+  const resolver = pluginByName("vite-plugin-vux:resolver");
+
+  /** `existing` stands in for the files that are actually on disk. */
+  function resolveId(
+    source: string,
+    importer: string | undefined,
+    existing: string[] = []
+  ) {
+    const resolved: string[] = [];
+    const context = {
+      resolve: (candidate: string) => {
+        resolved.push(candidate);
+        return Promise.resolve(existing.includes(candidate) ? { id: candidate } : null);
+      },
+    };
+    const hook = resolver.resolveId as (
+      this: unknown,
+      source: string,
+      importer: string | undefined,
+      options: unknown
+    ) => Promise<{ id: string } | null>;
+
+    return {
+      result: hook.call(context, source, importer, {}),
+      tried: resolved,
+    };
+  }
+
+  const VUX_IMPORTER = "/app/node_modules/vux/src/components/x-switch/index.vue";
+
+  it("resolves a component directory to its index.vue", async () => {
+    // Regression: `../inline-desc` from x-switch was unresolvable once the
+    // app-wide `.vue` extension was dropped.
+    const { result } = resolveId("../inline-desc", VUX_IMPORTER, [
+      "../inline-desc/index.vue",
+    ]);
+
+    await expect(result).resolves.toEqual({ id: "../inline-desc/index.vue" });
+  });
+
+  it("also tries a sibling .vue file", async () => {
+    const { result } = resolveId("../foo", VUX_IMPORTER, ["../foo.vue"]);
+
+    await expect(result).resolves.toEqual({ id: "../foo.vue" });
+  });
+
+  it("handles windows-style importers", async () => {
+    const { result } = resolveId(
+      "../inline-desc",
+      "C:\\app\\node_modules\\vux\\src\\components\\x-switch\\index.vue",
+      ["../inline-desc/index.vue"]
+    );
+
+    await expect(result).resolves.toEqual({ id: "../inline-desc/index.vue" });
+  });
+
+  it("never touches resolution for anyone outside vux", async () => {
+    for (const importer of ["/app/src/App.vue", "/app/src/main.js", undefined]) {
+      const { result, tried } = resolveId("./x", importer);
+
+      await expect(result).resolves.toBe(null);
+      expect(tried).toEqual([]);
+    }
+  });
+
+  it("declines package and absolute specifiers", async () => {
+    const { result, tried } = resolveId("vux", VUX_IMPORTER);
+
+    await expect(result).resolves.toBe(null);
+    expect(tried).toEqual([]);
+  });
+
+  it("declines when neither candidate exists", async () => {
+    const { result, tried } = resolveId("./animate", VUX_IMPORTER);
+
+    // A `./animate.js` file is resolved by Vite itself; probing both candidates
+    // and returning null must not turn into a false positive.
+    await expect(result).resolves.toBe(null);
+    expect(tried).toEqual(["./animate/index.vue", "./animate.vue"]);
   });
 });
 

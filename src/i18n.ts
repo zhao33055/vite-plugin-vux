@@ -2,7 +2,7 @@ import path from "node:path";
 
 import yaml from "js-yaml";
 
-import { exists, readFileSyncCached } from "./utils/fs";
+import { exists, readDependencyFile } from "./utils/fs";
 import {
   getContent,
   getFileName,
@@ -126,7 +126,7 @@ function loadLocales(root: string): LocaleTable | null {
     return null;
   }
 
-  const parsed = yaml.load(readFileSyncCached(localesPath));
+  const parsed = yaml.load(readDependencyFile(localesPath));
   if (!parsed || typeof parsed !== "object") {
     console.warn(
       `[vite-plugin-vux] vux locales file is empty or malformed: ${localesPath}`

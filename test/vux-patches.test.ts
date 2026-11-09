@@ -6,6 +6,8 @@ import {
   patchVuxSource,
 } from "../src/transforms/vux-patches";
 
+// Only consumer left: the esbuild pre-bundle hook, where rewriting the
+// specifier is the only trick available. See the resolver plugin for Vite proper.
 describe("patchBareComponentImports", () => {
   const cases: Array<[string, string]> = [
     ["vux/src/plugins/loading/index.js", "../../components/loading"],
@@ -119,14 +121,17 @@ describe("patchVuxSource", () => {
     ).toBe(null);
   });
 
-  it("applies the extension fix and reports the change", () => {
-    const result = patchVuxSource(
-      "project/node_modules/vux/src/plugins/toast/index.js",
-      `import C from '../../components/toast'`,
-      "toast.js"
-    );
-
-    expect(result?.code).toContain("../../components/toast/index.vue");
+  it("leaves specifier rewriting to the resolver plugin", () => {
+    // Editing a module's text to fix a path was the old approach; the resolver
+    // now answers `../../components/toast` -> `.../index.vue` without touching
+    // the source, so this hook must report "no change" rather than rewrite.
+    expect(
+      patchVuxSource(
+        "project/node_modules/vux/src/plugins/toast/index.js",
+        `import C from '../../components/toast'`,
+        "toast.js"
+      )
+    ).toBe(null);
   });
 
   it("warns when a require is left behind inside a function body", () => {

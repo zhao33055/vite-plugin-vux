@@ -1,5 +1,4 @@
 import { liftRequireImports } from "./cjs-to-esm";
-import { inVux } from "../utils/query";
 
 /**
  * Workarounds for quirks in the vux package source.
@@ -40,8 +39,12 @@ function escapeRegExp(value: string): string {
 }
 
 /**
- * Applies the extension fixes to a file's source. Shared by the transform hook
- * and by the dependency-prebundling hook, which see the same files on disk.
+ * Applies the extension fixes to a file's source.
+ *
+ * Only the esbuild pre-bundling hook needs this any more: rewriting specifiers
+ * is the one trick available there, because esbuild resolves files itself. Under
+ * Vite proper the same imports are handled by `vite-plugin-vux:resolver`, which
+ * resolves the candidate path instead of editing the module's text.
  */
 export function patchBareComponentImports(
   normalizedId: string,
@@ -97,21 +100,15 @@ export function patchVuxSource(
   filename: string,
   onWarn?: (message: string) => void
 ): { code: string } | null {
-  if (!inVux(normalizedId)) return null;
+  const commonJs = patchCommonJs(normalizedId, code);
+  if (!commonJs) return null;
 
-  const withExtensions = patchBareComponentImports(normalizedId, code);
-  const commonJs = patchCommonJs(normalizedId, withExtensions ?? code);
-
-  if (commonJs) {
-    if (commonJs.remainingRequires > 0) {
-      onWarn?.(
-        `${filename}: converted top-level require() calls to imports but ${commonJs.remainingRequires} remain inside function bodies; ` +
-          `this vux file cannot be auto-converted and will likely fail at runtime.`
-      );
-    }
-    return { code: commonJs.code };
+  if (commonJs.remainingRequires > 0) {
+    onWarn?.(
+      `${filename}: converted top-level require() calls to imports but ${commonJs.remainingRequires} remain inside function bodies; ` +
+        `this vux file cannot be auto-converted and will likely fail at runtime.`
+    );
   }
 
-  if (withExtensions !== null) return { code: withExtensions };
-  return null;
+  return { code: commonJs.code };
 }

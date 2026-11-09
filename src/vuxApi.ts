@@ -3,7 +3,7 @@ import path from "node:path";
 import stripCssComments from "strip-css-comments";
 
 import { tryRequire, vuxPath } from "./utils/module";
-import { exists, readFileSyncCached } from "./utils/fs";
+import { exists, readSourceFile } from "./utils/fs";
 import type { VuxPlugin, VuxPluginName, VuxLessThemePlugin } from "./types";
 
 export type {
@@ -72,7 +72,9 @@ export function getVariables(filePath: string): Record<string, string> {
     throw new Error(`[vite-plugin-vux] theme file not found: ${filePath}`);
   }
 
-  stripCssComments(readFileSyncCached(filePath), { preserve: false })
+  // The theme file belongs to the app: it is edited while `vite dev` runs, so
+  // this read must not go through the dependency cache.
+  stripCssComments(readSourceFile(filePath), { preserve: false })
     .split("\n")
     .forEach((rawLine) => {
       let line = trim(rawLine);

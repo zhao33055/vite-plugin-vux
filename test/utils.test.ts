@@ -1,6 +1,11 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { createTagRegex, removeTag, reserveTag } from "../src/dom";
+import { readDependencyFile, readSourceFile } from "../src/utils/fs";
 import {
   inNodeModules,
   inVux,
@@ -86,6 +91,32 @@ describe("inVux", () => {
     expect(inVux("C:\\app\\node_modules\\vux\\src\\a.js")).toBe(true);
     expect(inVux("/app/node_modules/vux-loader/src/a.js")).toBe(false);
     expect(inVux("/app/src/main.js")).toBe(false);
+  });
+});
+
+describe("file reads", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vux-fs-"));
+  const write = (name: string, contents: string) => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, contents);
+    return file;
+  };
+
+  it("re-reads app-owned files so `vite dev` picks up theme edits", () => {
+    const file = write("theme.less", "@color: #000;\n");
+
+    expect(readSourceFile(file)).toContain("#000");
+    write("theme.less", "@color: #f90;\n");
+    expect(readSourceFile(file)).toContain("#f90");
+  });
+
+  it("caches installed-package files, which cannot change under a running server", () => {
+    const file = write("icon.svg", "<svg>123</svg>");
+
+    expect(readDependencyFile(file)).toContain("123");
+    write("icon.svg", "<svg>456</svg>");
+    // Stale by design: reinstalling a package restarts the process anyway.
+    expect(readDependencyFile(file)).toContain("123");
   });
 });
 

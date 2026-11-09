@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { exists, readFileSyncCached } from "./utils/fs";
+import { exists, readDependencyFile } from "./utils/fs";
 import { getContent, type Block, type TransFormPlugin } from "./compiler";
 import type { Config } from "./types";
 
@@ -114,7 +114,7 @@ export function createXiconTransformPlugin(
       return null;
     }
 
-    return readFileSyncCached(svgPath);
+    return readDependencyFile(svgPath);
   };
 
   return {

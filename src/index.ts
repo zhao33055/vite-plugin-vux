@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { createFilter, type Plugin } from "vite";
 
-import type { Config, VuxOptions } from "./types";
+import type { Config, VuxI18nPlugin, VuxOptions } from "./types";
 import {
   compileVue,
   generateVue,
@@ -174,22 +174,46 @@ function createPreBundlePatchPlugin(): EsbuildPlugin {
 }
 
 /**
- * Vite's own default `resolve.extensions`, plus `.vue`.
+ * Relative imports inside the vux package have no `.vue` extension - vux was
+ * authored for webpack, whose `resolve.extensions` covered that.
  *
- * The list has to be written out in full: assigning `[".js", ".vue"]` replaces
- * the defaults instead of extending them, which silently breaks extension-less
- * imports of `.ts`, `.tsx`, `.jsx` and `.json` in the host project.
+ * The previous version added `.vue` to the app-wide `resolve.extensions`, which
+ * also changes how *the host project's* own extension-less imports resolve. The
+ * requirement is only ever true for importers inside vux, so it is expressed as
+ * a resolver scoped to those, and Vite's defaults stay untouched.
  */
-const RESOLVE_EXTENSIONS = [
-  ".mjs",
-  ".js",
-  ".mts",
-  ".ts",
-  ".jsx",
-  ".tsx",
-  ".json",
-  ".vue",
-];
+const RELATIVE_IMPORT_RE = /^\.{1,2}\//;
+
+/**
+ * Accepted for vux-loader compatibility, deliberately not implemented.
+ *
+ * Keeping them typed means a config written for vux-loader still compiles; a
+ * config that actually *sets* one is asking for behaviour that will not happen,
+ * which deserves a message rather than silence.
+ */
+const UNSUPPORTED_I18N_OPTIONS = [
+  "functionName",
+  "vuxFunctionName",
+  "localeList",
+  "staticTranslations",
+  "staticReplace",
+] as const;
+
+function warnUnsupportedOptions(options: VuxOptions): void {
+  const i18n = (options.plugins ?? []).find(
+    (plugin): plugin is VuxI18nPlugin => plugin.name === "i18n"
+  );
+  if (!i18n) return;
+
+  const used = UNSUPPORTED_I18N_OPTIONS.filter((key) => i18n[key] !== undefined);
+  if (!used.length) return;
+
+  console.warn(
+    `[vite-plugin-vux] the i18n options ${used.join(", ")} have no effect under Vite: ` +
+      `only "$t()" calls inside the vux package itself are statically replaced. ` +
+      `Keep vue-i18n for your own strings.`
+  );
+}
 
 export default function vux(options: VuxOptions = {}): Plugin[] {
   /**
@@ -214,11 +238,10 @@ export default function vux(options: VuxOptions = {}): Plugin[] {
 
     config(userConfig) {
       const { config } = resolveContext(userConfig.root);
+      warnUnsupportedOptions(options);
 
       return {
-        resolve: {
-          extensions: RESOLVE_EXTENSIONS,
-        },
+        // Deliberately no `resolve.extensions`: see `RELATIVE_IMPORT_RE`.
         css: {
           preprocessorOptions: {
             less: {
@@ -295,6 +318,35 @@ export default function vux(options: VuxOptions = {}): Plugin[] {
     },
   };
 
+  /**
+   * Resolves the extension-less component imports inside the vux package
+   * (`import '../inline-desc'`) to `…/index.vue` or `….vue`.
+   *
+   * `post` so that this is consulted only once Vite and every other plugin have
+   * already declined, and gated on the *importer* being inside vux: an
+   * app-wide `.vue` extension would silently change how the host project's own
+   * `./x` imports resolve.
+   */
+  const resolverPlugin: Plugin = {
+    name: "vite-plugin-vux:resolver",
+    enforce: "post",
+
+    async resolveId(source, importer, options) {
+      if (!importer || !RELATIVE_IMPORT_RE.test(source)) return null;
+      if (!inVux(parseRequest(importer).filename.split("\\").join("/"))) return null;
+
+      for (const candidate of [`${source}/index.vue`, `${source}.vue`]) {
+        const resolved = await this.resolve(candidate, importer, {
+          ...options,
+          skipSelf: true,
+        });
+        if (resolved) return resolved;
+      }
+
+      return null;
+    },
+  };
+
   /** `import { X } from "vux"` -> one default import per component. */
   const autoImportPlugin: Plugin = {
     name: "vite-plugin-vux:auto-import",
@@ -340,5 +392,5 @@ export default function vux(options: VuxOptions = {}): Plugin[] {
     },
   };
 
-  return [sfcPlugin, patchPlugin, autoImportPlugin];
+  return [sfcPlugin, patchPlugin, resolverPlugin, autoImportPlugin];
 }
