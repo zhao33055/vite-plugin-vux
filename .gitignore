@@ -1,5 +1,9 @@
 # dependencies
 **/node_modules
+# ...except the test fixture's, which is content, not dependencies: the plugin
+# reads vux as `<root>/node_modules/vux`, so the fixture has to wear that shape.
+!test/fixtures/vux-mini/node_modules/
+!test/fixtures/vux-mini/node_modules/**
 
 # compiled output
 **/dist

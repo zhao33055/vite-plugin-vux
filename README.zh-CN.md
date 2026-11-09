@@ -176,11 +176,13 @@ vux({
 pnpm install
 pnpm run dev            # rollup watch 构建
 pnpm run build          # 产出 dist/（CJS + ESM + 类型 + 内置 xscroll）
-pnpm run test           # vitest，直接使用 node_modules 中真实的 vux 包
+pnpm run test           # vitest，读取 test/fixtures/vux-mini 夹具，不依赖真实 vux 包
 pnpm run typecheck      # tsc -p tsconfig.test.json
 pnpm run lint           # eslint flat config
 pnpm run format         # prettier
 ```
+
+单元测试读取 `test/fixtures/vux-mini` —— 一个按插件读取包的方式（`<root>/node_modules/vux/...`）搭起来的迷你包。那里测试变红，说明是本插件出了问题，而不是某个 vux 版本挪动了它要读的文件。
 
 `playground/` 是一个可运行的 Vue 2 + vux 2.9.x 应用，用作端到端验证：
 
@@ -192,7 +194,7 @@ pnpm run test:e2e     # 在仓库根目录执行：构建 playground
 
 构建输出里的模块数与体积就是回归信号 —— 模块数若回到 700 左右，说明按需改写在某个环节失效了。
 
-CI（`.github/workflows/ci.yml`）在 Node 18/20/22 上执行 lint、格式检查、类型检查、测试与构建，另外还有一次使用比单元测试更老的 vux 版本的 playground 构建。
+CI（`.github/workflows/ci.yml`）在 Node 18/20/22 上执行 lint、格式检查、类型检查、测试与构建，另外还有一次针对真实 vux（刻意选择更旧的 2.9.x）的 playground 构建。
 
 ## 贡献
 

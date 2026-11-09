@@ -5,11 +5,29 @@ import { describe, expect, it, vi } from "vitest";
 
 import vux, { createVuxContext } from "../src/index";
 
-const root = process.cwd();
+/** See `test/fixtures/vux-mini/README.md` - nothing here reads the real package. */
+const root = path.resolve(__dirname, "fixtures/vux-mini");
 
-function pluginByName(name: string) {
-  const plugins = vux();
-  const plugin = plugins.find((p) => p.name === name);
+/** A project root with no vux installed, for the failure paths. */
+const noVuxRoot = path.resolve(__dirname, "fixtures/no-vux");
+
+/**
+ * The four plugins, with their context already resolved against `root`.
+ *
+ * The context is lazy because Vite only announces the project root through
+ * `config()`; calling that hook first is exactly what a real build does, and it
+ * is what stops the plugins from falling back to this repository's own
+ * `node_modules`.
+ */
+function pluginsAt(dir: string, options: Parameters<typeof vux>[0] = {}) {
+  const plugins = vux(options);
+  const config = plugins[0].config as (this: unknown, c: unknown) => unknown;
+  config.call({}, { root: dir });
+  return plugins;
+}
+
+function pluginByName(name: string, dir = root) {
+  const plugin = pluginsAt(dir).find((p) => p.name === name);
   if (!plugin) throw new Error(`plugin ${name} not found`);
   return plugin;
 }
@@ -47,10 +65,10 @@ describe("plugin factory", () => {
     expect(autoImport.enforce).toBeUndefined();
   });
 
-  it("exposes less variable injection and dependency hints through config", async () => {
+  it("exposes less variable injection and dependency hints through config", () => {
     const sfc = pluginByName("vite-plugin-vux:sfc");
     const hook = sfc.config as (this: unknown, c: unknown) => Record<string, any>;
-    const result = hook.call({}, {});
+    const result = hook.call({}, { root });
 
     // The plugin must not touch module resolution for the host project at all:
     // adding `.vue` to `resolve.extensions` changes how *their* `./x` imports
@@ -67,7 +85,7 @@ describe("plugin factory", () => {
     });
     const config = plugins[0].config as (this: unknown, c: unknown) => unknown;
 
-    config.call({}, {});
+    config.call({}, { root });
 
     const message = warn.mock.calls.map((call) => String(call[0])).join("\n");
     expect(message).toMatch(/staticReplace/);
@@ -78,13 +96,14 @@ describe("plugin factory", () => {
   });
 
   it("resolves the component map against vite's root, not the cwd", () => {
-    const sfc = pluginByName("vite-plugin-vux:sfc");
+    // A fresh factory on purpose: the context is memoised per plugin instance,
+    // so one seeded with the fixture root would hide the failure sought here.
+    const sfc = vux()[0];
     const hook = sfc.config as (this: unknown, c: unknown) => unknown;
-    const otherRoot = path.resolve(__dirname, "fixtures");
 
-    // The fixtures directory has no vux in it. If `root` were ignored the map
-    // would resolve from the repo root instead and nothing would throw.
-    expect(() => hook.call({}, { root: otherRoot })).toThrowError(
+    // `no-vux` has no vux in it. If `root` were ignored the map would resolve
+    // from this repository instead, and nothing would throw.
+    expect(() => hook.call({}, { root: noVuxRoot })).toThrowError(
       /Cannot find vux component map/
     );
   });
@@ -127,23 +146,28 @@ describe("xscroll virtual modules", () => {
   });
 });
 
-describe("SFC transform on real vux sources", () => {
+describe("SFC transform on the fixture package", () => {
   const sfc = pluginByName("vite-plugin-vux:sfc");
   const ctx = createVuxContext({}, root);
 
+  /** Hands a fixture component to the transform the way Vite would. */
+  function transformComponent(component: string) {
+    const file = path.resolve(root, "node_modules/vux/src/components", component);
+
+    return transform(sfc, fs.readFileSync(file, "utf-8"), file) as string;
+  }
+
   it("inlines icons and resolves i18n inside a vux component", () => {
-    const file = path.resolve(
-      root,
-      "node_modules/vux/src/components/actionsheet/index.vue"
-    );
-    const code = fs.readFileSync(file, "utf-8");
+    const out = transformComponent("actionsheet/index.vue");
 
-    const out = transform(sfc, code, file) as string;
-
-    expect(typeof out).toBe("string");
-    // i18n: `$t('cancel')` becomes a literal, and the <i18n> block disappears.
-    expect(out).not.toContain("$t('cancel')");
+    // The static key becomes a literal, and the `<i18n>` block - only ever
+    // read by `vue-i18n-loader` - disappears with it.
+    expect(out).toContain('{{ cancelText || "取消" }}');
     expect(out).not.toContain("<i18n>");
+    // A runtime lookup is left for vue-i18n, which is the whole point.
+    expect(out).toContain("$t(text.label || text)");
+    expect(out).toContain("vux-x-icon-ios-arrow-up");
+    expect(out).not.toContain("<x-icon");
     expect(ctx.config.componentMap.Actionsheet).toBeDefined();
   });
 
@@ -151,8 +175,7 @@ describe("SFC transform on real vux sources", () => {
     // datetime/index.vue carries `:data-confirm-text="$t('confirm_text')"`.
     // The literal used to be emitted with double quotes, which closed the
     // attribute early and made the Vue template compiler drop the element.
-    const file = path.resolve(root, "node_modules/vux/src/components/datetime/index.vue");
-    const out = transform(sfc, fs.readFileSync(file, "utf-8"), file) as string;
+    const out = transformComponent("datetime/index.vue");
 
     expect(out).toContain(`:data-confirm-text="'`);
     expect(out).not.toContain('=""');

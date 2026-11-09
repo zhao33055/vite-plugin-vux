@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -9,20 +10,29 @@ import {
   getVariables,
 } from "../src/vux/api";
 
-const root = process.cwd();
+/**
+ * Everything here reads the `vux-mini` fixture rather than the installed
+ * package, so an assertion failing means this plugin changed, not vux.
+ */
+const root = path.resolve(__dirname, "fixtures/vux-mini");
+
+/** A project root with no vux in it at all. */
+const noVuxRoot = path.resolve(__dirname, "fixtures/no-vux");
 
 describe("getComponentMap", () => {
-  it("loads the real vux component map", () => {
-    const map = getComponentMap(root);
-
-    expect(Object.keys(map).length).toBeGreaterThan(100);
-    // map.json keys are vux's own PascalCase names (XButton, not Button).
-    expect(map.XButton).toContain("components");
-    expect(map.XButton).toMatch(/\.vue$/);
+  it("reads the component table from the package's own layout", () => {
+    expect(getComponentMap(root)).toEqual({
+      Actionsheet: "src/components/actionsheet/index.vue",
+      Datetime: "src/components/datetime/index.vue",
+      InlineDesc: "src/components/inline-desc/index.vue",
+      XButton: "src/components/x-button/index.vue",
+      XInput: "src/components/x-input/index.vue",
+      XSwitch: "src/components/x-switch/index.vue",
+    });
   });
 
   it("throws a helpful error when vux is not installed", () => {
-    expect(() => getComponentMap(path.resolve(__dirname, "fixtures"))).toThrowError(
+    expect(() => getComponentMap(noVuxRoot)).toThrowError(
       /Cannot find vux component map/
     );
   });
@@ -32,14 +42,14 @@ describe("getStylesDir", () => {
   it("returns a directory, which is what less `paths` expects", () => {
     const dir = getStylesDir(root);
 
-    expect(dir).toMatch(/styles$/);
     expect(path.basename(dir)).toBe("styles");
+    expect(fs.statSync(dir).isDirectory()).toBe(true);
   });
 });
 
 describe("getVariables", () => {
   it("parses declarations, ignores comments and follows @import", () => {
-    const vars = getVariables(path.resolve(__dirname, "fixtures/theme.less"));
+    const vars = getVariables(path.resolve(root, "theme.less"));
 
     expect(vars).toMatchObject({
       color: "#2d8cf0",
@@ -53,9 +63,8 @@ describe("getVariables", () => {
 
   it("warns and skips names that cannot be less variables", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const filePath = path.resolve(__dirname, "fixtures/theme.less");
     // The fixture contains a selector line, which must not become a variable.
-    const vars = getVariables(filePath);
+    const vars = getVariables(path.resolve(root, "theme.less"));
 
     expect(Object.keys(vars).every((key) => /^[A-Za-z0-9_-]+$/.test(key))).toBe(true);
     expect(warn).toHaveBeenCalled();
@@ -63,9 +72,9 @@ describe("getVariables", () => {
   });
 
   it("throws when the theme file is missing", () => {
-    expect(() =>
-      getVariables(path.resolve(__dirname, "fixtures/nope.less"))
-    ).toThrowError(/theme file not found/);
+    expect(() => getVariables(path.resolve(root, "nope.less"))).toThrowError(
+      /theme file not found/
+    );
   });
 });
 
@@ -74,9 +83,9 @@ describe("getThemeVariables", () => {
     expect(getThemeVariables(root, [])).toEqual({});
   });
 
-  it("reads the file named by the less-theme plugin", () => {
+  it("reads the file named by the less-theme plugin, relative to the root", () => {
     expect(
-      getThemeVariables(root, [{ name: "less-theme", path: "test/fixtures/theme.less" }])
+      getThemeVariables(root, [{ name: "less-theme", path: "theme.less" }])
     ).toMatchObject({ color: "#2d8cf0" });
   });
 });

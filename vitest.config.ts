@@ -4,8 +4,9 @@ export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
     environment: "node",
-    // Tests read the real installed vux package as a fixture, so they must not
-    // run against a partially installed tree.
+    // The specs read `test/fixtures/vux-mini` instead of the installed package,
+    // so nothing here depends on a partially installed tree; forks keeps each
+    // file's `console.warn` spies and dependency-read caches to itself.
     pool: "forks",
   },
 });

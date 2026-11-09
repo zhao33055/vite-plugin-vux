@@ -176,11 +176,13 @@ A **static** `type` is required. A bound `:type` cannot be resolved at build tim
 pnpm install
 pnpm run dev            # rollup watch build
 pnpm run build          # dist/ (CJS + ESM + types + bundled xscroll)
-pnpm run test           # vitest, against the real vux package in node_modules
+pnpm run test           # vitest, against the test/fixtures/vux-mini fixture
 pnpm run typecheck      # tsc -p tsconfig.test.json
 pnpm run lint           # eslint flat config
 pnpm run format         # prettier
 ```
+
+The unit tests read `test/fixtures/vux-mini` — a miniature package laid out the way the plugin reads one (`<root>/node_modules/vux/...`). A red test there means this plugin broke, not that a vux release moved a file underneath it.
 
 `playground/` is a runnable Vue 2 + vux 2.9.x app used as the end-to-end check:
 
@@ -192,7 +194,7 @@ pnpm run test:e2e       # from the repo root: builds the playground
 
 The module and byte counts in the build output are the regression signal — a jump back to ~700 modules means the auto-import rewrite stopped applying somewhere.
 
-CI (`.github/workflows/ci.yml`) runs lint, format, typecheck, tests and build on Node 18/20/22, plus a playground build against an older vux than the unit tests use.
+CI (`.github/workflows/ci.yml`) runs lint, format, typecheck, tests and build on Node 18/20/22, plus a playground build against a real — and deliberately older — vux release.
 
 ## Contributing
 

@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import path from "node:path";
+
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createI18nCustomBlockTransform,
@@ -131,17 +133,43 @@ describe("resolveStaticTranslations", () => {
 
 describe("i18n template transform", () => {
   const VUX_FILE = "/app/node_modules/vux/src/components/actionsheet/index.vue";
+  /** Where `vux/src/locales/all.yml` is read from; see the fixture's README. */
+  const root = path.resolve(__dirname, "fixtures/vux-mini");
 
-  function run(plugins: VuxPlugin[], code: string, filename = VUX_FILE) {
-    const config: Config = { root: process.cwd(), ssr: false, componentMap: {}, plugins };
+  function run(plugins: VuxPlugin[], code: string, filename = VUX_FILE, from = root) {
+    const config: Config = { root: from, ssr: false, componentMap: {}, plugins };
     const block: BlockView = { type: "template", filename, content: code, attrs: {} };
 
     return createI18nTransform(config)(block, scopeOf(filename));
   }
 
   it("replaces keys under the component's own namespace", () => {
-    // `vux.actionsheet.cancel` is in the installed package's locales/all.yml.
+    // `vux.actionsheet.cancel` is a key in the fixture's locales/all.yml.
     expect(run([], "{{ $t('cancel') }}")).toEqual({ content: '{{ "取消" }}' });
+  });
+
+  it("leaves a key that has no translation, and reports it once", () => {
+    // The fixture's x-input template references a key all.yml does not carry.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const file = "/app/node_modules/vux/src/components/x-input/index.vue";
+
+    expect(run([], "{{ $t('unknown_key') }}", file)).toBeUndefined();
+    expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toMatch(
+      /no "zh-CN" translation for "vux.x-input.unknown_key"/
+    );
+    warn.mockRestore();
+  });
+
+  it("gives up with a warning when the package ships no locale table", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(
+      run([], "{{ $t('cancel') }}", VUX_FILE, path.resolve(__dirname, "fixtures/no-vux"))
+    ).toBeUndefined();
+    expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toMatch(
+      /vux locales not found/
+    );
+    warn.mockRestore();
   });
 
   it("leaves an app's own $t calls to vue-i18n", () => {
@@ -168,6 +196,8 @@ describe("i18n template transform", () => {
 });
 
 describe("i18n custom block transform", () => {
+  // `vue/compiler-sfc` is resolved from this repository, which depends on vue:
+  // that one is a real dependency of the plugin, not part of the fixture.
   const compiler = resolveCompiler(process.cwd());
 
   function customBlock(filename: string) {

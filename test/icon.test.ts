@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import path from "node:path";
+
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createXiconTransform,
@@ -107,9 +109,9 @@ describe("inlineXIcon", () => {
 });
 
 describe("x-icon transform", () => {
-  /** Reads the real `vux/src/icons` of the installed package. */
+  /** Reads `vux/src/icons` from the fixture package; see its README. */
   const config: Config = {
-    root: process.cwd(),
+    root: path.resolve(__dirname, "fixtures/vux-mini"),
     ssr: false,
     componentMap: {},
     plugins: [],
@@ -137,5 +139,26 @@ describe("x-icon transform", () => {
     const patch = run('<x-icon :type="current"></x-icon>');
 
     expect(patch).toBeUndefined();
+  });
+
+  it("warns once per missing icon, however many times it appears", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // One transform instance stands for one build: that is the scope in which
+    // the complaint is deduplicated, so it is built here rather than via `run`.
+    const transform = createXiconTransform(config);
+    const block: BlockView = {
+      type: "template",
+      filename: "/app/src/pages/Home.vue",
+      content:
+        '<div><x-icon type="no-such-icon"></x-icon><x-icon type="no-such-icon"/></div>',
+      attrs: {},
+    };
+
+    expect(transform(block, NO_SCOPE)).toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toMatch(
+      /vux icon "no-such-icon" not found.*leaving <x-icon> as-is/
+    );
+    warn.mockRestore();
   });
 });
