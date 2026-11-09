@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createXiconTransform, inlineXIcon, parseAttributes } from "../src/icon";
+import {
+  createXiconTransform,
+  inlineXIcon,
+  parseAttributes,
+} from "../src/sfc/transforms/icon";
 import { NO_SCOPE, type BlockView } from "../src/contracts";
 import type { Config } from "../src/types";
 

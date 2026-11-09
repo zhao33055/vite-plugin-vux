@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { literalFor, patchTemplate, type TemplatePatch } from "../src/template-patch";
+import { literalFor, patchTemplate, type TemplatePatch } from "../src/shared/html";
 
 describe("literalFor", () => {
   it("uses a JSON literal outside an attribute", () => {

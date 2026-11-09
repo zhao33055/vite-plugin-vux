@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { transformVuxImport } from "../src/transforms/auto-import";
+import { transformVuxImport } from "../src/code/auto-import";
 
 // A slice of vux's real map.json, enough to cover every code path.
 const map: Record<string, string> = {

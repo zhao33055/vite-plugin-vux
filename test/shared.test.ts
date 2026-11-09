@@ -4,16 +4,15 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { createTagRegex, removeTag, reserveTag } from "../src/dom";
-import { readDependencyFile, readSourceFile } from "../src/utils/fs";
+import { createTagRegex, removeTag, reserveTag } from "../src/shared/dom";
+import { readDependencyFile, readSourceFile } from "../src/shared/fs";
 import {
   inNodeModules,
   inVux,
-  isCompiledSfc,
   isJavaScriptFile,
   isScriptLike,
   parseRequest,
-} from "../src/utils/query";
+} from "../src/shared/query";
 
 describe("parseRequest", () => {
   it("splits filename and query", () => {
@@ -54,23 +53,6 @@ describe("file predicates", () => {
   it("treats vue sub-requests as scripts but a raw SFC as not", () => {
     expect(isScriptLike("/a/App.vue?vue&type=script&lang.js")).toBe(true);
     expect(isScriptLike("/a/App.vue")).toBe(false);
-  });
-});
-
-describe("isCompiledSfc", () => {
-  it("recognises plugin-vue2 output, which keeps the plain .vue id", () => {
-    expect(
-      isCompiledSfc("/a/App.vue", 'import { render } from "./render";\nexport default {}')
-    ).toBe(true);
-  });
-
-  it("does not mistake the raw SFC for JavaScript", () => {
-    expect(isCompiledSfc("/a/App.vue", "<template><p/></template>")).toBe(false);
-    expect(isCompiledSfc("/a/App.vue", "\n  <template><p/></template>")).toBe(false);
-  });
-
-  it("ignores non-vue ids", () => {
-    expect(isCompiledSfc("/a/main.js", "import x from 'y'")).toBe(false);
   });
 });
 

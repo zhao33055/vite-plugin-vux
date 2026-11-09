@@ -2,9 +2,21 @@ import path from "node:path";
 
 import stripCssComments from "strip-css-comments";
 
-import { tryRequire, vuxPath } from "./utils/module";
-import { exists, readSourceFile } from "./utils/fs";
-import type { VuxPlugin, VuxPluginName, VuxLessThemePlugin } from "./types";
+import { tryRequire } from "../shared/module";
+import { exists, readSourceFile } from "../shared/fs";
+import { vuxPath } from "./paths";
+import type { VuxPlugin, VuxPluginName, VuxLessThemePlugin } from "../types";
+
+/**
+ * Reads the data the plugin needs from the installed vux package and from the
+ * user's plugin options (`less-theme`, `style-parser`, `i18n`).
+ *
+ * Everything in here reads the project's own inputs: the option files a user
+ * points at (`less-theme`, `style-parser`) and the component map. The sfc
+ * transforms that read the package's *data* files - locales, icons - live with
+ * the transform that uses them and share `shared/fs`, because what they read is
+ * an implementation detail of that transform, not of the project's setup.
+ */
 
 export type {
   VuxPlugin,
@@ -13,7 +25,7 @@ export type {
   VuxLessThemePlugin,
   VuxStyleParserPlugin,
   ResolvedI18nOptions,
-} from "./types";
+} from "../types";
 
 export function findPlugin<T extends VuxPlugin = VuxPlugin>(
   plugins: VuxPlugin[],

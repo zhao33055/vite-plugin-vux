@@ -1,4 +1,4 @@
-import type { BlockTransform } from "./contracts";
+import type { BlockTransform } from "../../contracts";
 
 /**
  * Some vux templates carry a `lang` attribute (e.g. `pug`) that Vite has no

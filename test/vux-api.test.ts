@@ -7,7 +7,7 @@ import {
   getStylesDir,
   getThemeVariables,
   getVariables,
-} from "../src/vuxApi";
+} from "../src/vux/api";
 
 const root = process.cwd();
 

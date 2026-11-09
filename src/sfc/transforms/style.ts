@@ -1,6 +1,6 @@
-import type { BlockTransform } from "./contracts";
-import { findPlugin, type VuxStyleParserPlugin } from "./vuxApi";
-import type { Config } from "./types";
+import type { BlockTransform } from "../../contracts";
+import { findPlugin, type VuxStyleParserPlugin } from "../../vux/api";
+import type { Config } from "../../types";
 
 /**
  * Lets the user post-process `<style lang="less">` content before less

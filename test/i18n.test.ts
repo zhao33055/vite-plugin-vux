@@ -4,8 +4,8 @@ import {
   createI18nCustomBlockTransform,
   createI18nTransform,
   resolveStaticTranslations,
-} from "../src/i18n";
-import { compileVue, resolveCompiler } from "../src/compiler";
+} from "../src/sfc/transforms/i18n";
+import { compileVue, resolveCompiler } from "../src/sfc/compiler";
 import type { BlockView } from "../src/contracts";
 import { scopeOf } from "../src/vux/paths";
 import type { Config, VuxPlugin } from "../src/types";

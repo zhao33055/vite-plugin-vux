@@ -1,6 +1,6 @@
-import { removeTag, reserveTag } from "./dom";
-import type { BlockTransform } from "./contracts";
-import type { Config } from "./types";
+import { removeTag, reserveTag } from "../../shared/dom";
+import type { BlockTransform } from "../../contracts";
+import type { Config } from "../../types";
 
 /**
  * Strips the branch of a template that does not apply to the current rendering

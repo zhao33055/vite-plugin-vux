@@ -4,7 +4,7 @@ import {
   patchBareComponentImports,
   patchCommonJs,
   patchVuxSource,
-} from "../src/transforms/vux-patches";
+} from "../src/code/patches";
 
 // Only consumer left: the esbuild pre-bundle hook, where rewriting the
 // specifier is the only trick available. See the resolver plugin for Vite proper.

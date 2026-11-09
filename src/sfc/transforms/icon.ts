@@ -1,9 +1,9 @@
 import path from "node:path";
 
-import { exists, readDependencyFile } from "./utils/fs";
-import type { BlockTransform } from "./contracts";
-import { patchTemplate } from "./template-patch";
-import type { Config } from "./types";
+import { exists, readDependencyFile } from "../../shared/fs";
+import type { BlockTransform } from "../../contracts";
+import { patchTemplate } from "../../shared/html";
+import type { Config } from "../../types";
 
 /**
  * `<x-icon>` has no runtime implementation: `vux/src/components/x-icon/` ships

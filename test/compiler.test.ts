@@ -9,7 +9,7 @@ import {
   transformTemplate,
   resolveCompiler,
   type Block,
-} from "../src/compiler";
+} from "../src/sfc/compiler";
 import { NO_SCOPE, type BlockTransform } from "../src/contracts";
 
 const compiler = resolveCompiler(process.cwd());

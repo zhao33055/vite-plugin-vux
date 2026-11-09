@@ -2,12 +2,12 @@ import path from "node:path";
 
 import yaml from "js-yaml";
 
-import { exists, readDependencyFile } from "./utils/fs";
-import { escapeRegExp } from "./utils/regexp";
-import type { BlockTransform } from "./contracts";
-import { literalFor, patchTemplate } from "./template-patch";
-import { findPlugin, type VuxI18nPlugin } from "./vuxApi";
-import type { Config, ResolvedI18nOptions } from "./types";
+import { exists, readDependencyFile } from "../../shared/fs";
+import { escapeRegExp } from "../../shared/regexp";
+import type { BlockTransform } from "../../contracts";
+import { literalFor, patchTemplate } from "../../shared/html";
+import { findPlugin, type VuxI18nPlugin } from "../../vux/api";
+import type { Config, ResolvedI18nOptions } from "../../types";
 
 /**
  * Statically resolves the `$t()` calls inside vux's own templates.

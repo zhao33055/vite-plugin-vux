@@ -1,7 +1,7 @@
 import type { SFCBlock, SFCDescriptor } from "vue/compiler-sfc";
 
-import { tryRequire } from "./utils/module";
-import type { BlockTransform, BlockView, FileScope } from "./contracts";
+import { tryRequire } from "../shared/module";
+import type { BlockTransform, BlockView, FileScope } from "../contracts";
 
 /**
  * A single SFC block, tagged with the file it came from.

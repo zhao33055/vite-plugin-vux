@@ -1,10 +1,22 @@
+import path from "node:path";
+
 import type { FileScope } from "../contracts";
-import { inNodeModules, inVux } from "../utils/query";
+import { inNodeModules, inVux } from "../shared/query";
 
 /**
  * Everything this package knows about the *layout* of the installed vux package
  * lives here, so that a layout change upstream is one file to fix.
  */
+
+/** Absolute path to the installed vux package, resolved from the project root. */
+export function getVuxRoot(root: string): string {
+  return path.resolve(root, "node_modules", "vux");
+}
+
+/** Absolute path to a file inside the installed vux package. */
+export function vuxPath(root: string, ...segments: string[]): string {
+  return path.join(getVuxRoot(root), ...segments);
+}
 
 /**
  * Vite hands ids to plugins with whichever separator the platform and the

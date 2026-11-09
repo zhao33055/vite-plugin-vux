@@ -1,5 +1,5 @@
-import { escapeRegExp } from "../utils/regexp";
-import { liftRequireImports } from "./cjs-to-esm";
+import { escapeRegExp } from "../shared/regexp";
+import { liftRequireImports } from "./hoist-require";
 
 /**
  * Workarounds for quirks in the vux package source.
