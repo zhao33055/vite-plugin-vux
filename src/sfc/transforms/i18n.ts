@@ -3,6 +3,7 @@ import path from "node:path";
 import yaml from "js-yaml";
 
 import { exists, readDependencyFile } from "../../shared/fs";
+import type { Logger } from "../../shared/logger";
 import { escapeRegExp } from "../../shared/regexp";
 import type { BlockTransform } from "../../contracts";
 import { literalFor, patchTemplate } from "../../shared/html";
@@ -73,7 +74,7 @@ export function resolveStaticTranslations(
   ]);
 }
 
-function loadLocales(root: string): LocaleTable | null {
+function loadLocales(root: string, logger: Logger): LocaleTable | null {
   const localesPath = path.resolve(
     root,
     "node_modules",
@@ -84,8 +85,8 @@ function loadLocales(root: string): LocaleTable | null {
   );
 
   if (!exists(localesPath)) {
-    console.warn(
-      `[vite-plugin-vux] vux locales not found at ${localesPath}; ` +
+    logger.warn(
+      `vux locales not found at ${localesPath}; ` +
         `vux strings will be resolved at runtime instead.`
     );
     return null;
@@ -93,9 +94,7 @@ function loadLocales(root: string): LocaleTable | null {
 
   const parsed = yaml.load(readDependencyFile(localesPath));
   if (!parsed || typeof parsed !== "object") {
-    console.warn(
-      `[vite-plugin-vux] vux locales file is empty or malformed: ${localesPath}`
-    );
+    logger.warn(`vux locales file is empty or malformed: ${localesPath}`);
     return null;
   }
 
@@ -121,8 +120,9 @@ export function resolveI18nOptions(plugin?: VuxI18nPlugin): ResolvedI18nOptions 
 }
 
 export function createI18nTransform(config: Config): BlockTransform {
+  const { logger } = config;
   const options = resolveI18nOptions(findPlugin<VuxI18nPlugin>(config.plugins, "i18n"));
-  const locales = options.dynamic ? null : loadLocales(config.root);
+  const locales = options.dynamic ? null : loadLocales(config.root, logger);
   const warned = new Set<string>();
 
   const lookup = (key: string): string | undefined => locales?.[options.locale]?.[key];
@@ -139,8 +139,8 @@ export function createI18nTransform(config: Config): BlockTransform {
       onMissing: (key) => {
         if (warned.has(key)) return;
         warned.add(key);
-        console.warn(
-          `[vite-plugin-vux] no "${options.locale}" translation for "${key}" in vux locales; left as a runtime lookup.`
+        logger.warn(
+          `no "${options.locale}" translation for "${key}" in vux locales; left as a runtime lookup.`
         );
       },
     });

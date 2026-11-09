@@ -1,3 +1,4 @@
+import { createConsoleLogger, type Logger } from "./shared/logger";
 import type { BlockTransform } from "./contracts";
 import { resolveCompiler, type SfcCompiler } from "./sfc/compiler";
 import {
@@ -32,11 +33,13 @@ export interface VuxContext {
  * Resolves everything that touches the filesystem.
  *
  * Kept separate from the plugin factory so tests can build a context against a
- * fixture root without starting Vite.
+ * fixture root without starting Vite - and hand it somewhere to warn that is not
+ * `console`.
  */
 export function createVuxContext(
   options: VuxOptions = {},
-  root: string = process.cwd()
+  root: string = process.cwd(),
+  logger: Logger = createConsoleLogger()
 ): VuxContext {
   const plugins = options.plugins ?? [];
 
@@ -45,6 +48,7 @@ export function createVuxContext(
     ssr: !!options.ssr,
     componentMap: getComponentMap(root),
     plugins,
+    logger,
   };
 
   return {

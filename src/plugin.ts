@@ -14,6 +14,7 @@ import {
   transformStyles,
   transformTemplate,
 } from "./sfc/compiler";
+import { createConsoleLogger, type Logger } from "./shared/logger";
 import { inNodeModules, inVux, isScriptLike, parseRequest } from "./shared/query";
 import { lessConfig } from "./vux/less-config";
 import { normalizePath, scopeOf } from "./vux/paths";
@@ -26,7 +27,9 @@ import type { VuxI18nPlugin, VuxOptions } from "./types";
  *
  * Rules for this file: no filesystem reads (that is `./context` and `./vux/api`),
  * no string mashing (that is `./sfc` and `./code`), no knowledge of vux's layout
- * (that is `./vux`). Each hook decides whether it applies and delegates.
+ * (that is `./vux`), and no `console` - a diagnostic either goes to the build's
+ * `Logger` or, where Rollup hands the hook a plugin context, to `this.warn`.
+ * Each hook decides whether it applies and delegates.
  */
 
 /**
@@ -59,7 +62,7 @@ const UNSUPPORTED_I18N_OPTIONS = [
   "staticReplace",
 ] as const;
 
-function warnUnsupportedOptions(options: VuxOptions): void {
+function warnUnsupportedOptions(options: VuxOptions, logger: Logger): void {
   const i18n = (options.plugins ?? []).find(
     (plugin): plugin is VuxI18nPlugin => plugin.name === "i18n"
   );
@@ -68,14 +71,22 @@ function warnUnsupportedOptions(options: VuxOptions): void {
   const used = UNSUPPORTED_I18N_OPTIONS.filter((key) => i18n[key] !== undefined);
   if (!used.length) return;
 
-  console.warn(
-    `[vite-plugin-vux] the i18n options ${used.join(", ")} have no effect under Vite: ` +
+  logger.warn(
+    `the i18n options ${used.join(", ")} have no effect under Vite: ` +
       `only the translation calls inside the vux package itself are statically replaced. ` +
       `Keep vue-i18n for your own strings.`
   );
 }
 
-export function buildVuxPlugins(options: VuxOptions = {}): Plugin[] {
+/**
+ * @param logger where this build's diagnostics go. Defaults to the console; a
+ *   caller embedding the plugin, or a test, hands it somewhere else and never
+ *   has to touch the global.
+ */
+export function buildVuxPlugins(
+  options: VuxOptions = {},
+  logger: Logger = createConsoleLogger()
+): Plugin[] {
   /**
    * Created on first use rather than here, because the project root is only
    * known once Vite calls `config()`. Everything the context reads from disk -
@@ -84,7 +95,7 @@ export function buildVuxPlugins(options: VuxOptions = {}): Plugin[] {
    */
   let ctx: VuxContext | undefined;
   const resolveContext = (root?: string): VuxContext => {
-    ctx ??= createVuxContext(options, root ? path.resolve(root) : process.cwd());
+    ctx ??= createVuxContext(options, root ? path.resolve(root) : process.cwd(), logger);
     return ctx;
   };
 
@@ -98,11 +109,11 @@ export function buildVuxPlugins(options: VuxOptions = {}): Plugin[] {
 
     config(userConfig) {
       const { config } = resolveContext(userConfig.root);
-      warnUnsupportedOptions(options);
+      warnUnsupportedOptions(options, logger);
 
       return {
         // Deliberately no `resolve.extensions`: see `RELATIVE_IMPORT_RE`.
-        css: lessConfig(config.root, config.plugins),
+        css: lessConfig(config.root, config.plugins, logger),
         optimizeDeps: optimizeDepsConfig(),
       };
     },
@@ -191,8 +202,8 @@ export function buildVuxPlugins(options: VuxOptions = {}): Plugin[] {
   const autoImportPlugin: Plugin = {
     name: "vite-plugin-vux:auto-import",
 
-    // Vite types this hook with `this: void`, so the diagnostic goes to
-    // console.warn like the rest of the plugin's build-time warnings.
+    // Vite types this hook with `this: void`, so there is no `this.warn` to use
+    // and the build's logger is the next best thing.
     configResolved(resolved) {
       const names = resolved.plugins.map((plugin) => plugin.name);
       const own = names.indexOf("vite-plugin-vux:auto-import");
@@ -201,8 +212,8 @@ export function buildVuxPlugins(options: VuxOptions = {}): Plugin[] {
       // This hook has to run on the *compiled* SFC, which only exists once
       // @vitejs/plugin-vue2 has transformed it. Plugin array order decides that.
       if (vue !== -1 && own !== -1 && vue > own) {
-        console.warn(
-          `[vite-plugin-vux] vux() is registered before vue(), so component imports inside ` +
+        logger.warn(
+          `vux() is registered before vue(), so component imports inside ` +
             `.vue files are not rewritten. Put vue() first: plugins: [vue(), vux()].`
         );
       }

@@ -1,10 +1,14 @@
+import type { Logger } from "./shared/logger";
+
 /**
  * Plugin option types.
  *
- * Note: `VuxPlugin` here is NOT a Vite plugin. These are transform descriptors
- * modelled after vux-loader's plugin objects (`less-theme`, `style-parser`,
- * `i18n`). They were previously typed as Vite's `Plugin[]`, which silently
- * allowed mismatches between what was declared and what the transforms read.
+ * Note: `VuxLoaderPlugin` here is NOT a Vite plugin. These are transform
+ * descriptors modelled after vux-loader's plugin objects (`less-theme`,
+ * `style-parser`, `i18n`). They were previously typed as Vite's `Plugin[]`,
+ * which silently allowed mismatches between what was declared and what the
+ * transforms read - and named `VuxPlugin`, which read as "a plugin contributed
+ * by this package", which is what the four objects `vux()` returns are.
  */
 
 export type VuxPluginName = "less-theme" | "style-parser" | "i18n";
@@ -46,12 +50,12 @@ export interface VuxI18nPlugin {
   staticReplace?: boolean;
 }
 
-export type VuxPlugin = VuxLessThemePlugin | VuxStyleParserPlugin | VuxI18nPlugin;
+export type VuxLoaderPlugin = VuxLessThemePlugin | VuxStyleParserPlugin | VuxI18nPlugin;
 
 export interface VuxOptions {
   /** Enable SSR specific template handling. */
   ssr?: boolean;
-  plugins?: VuxPlugin[];
+  plugins?: VuxLoaderPlugin[];
 }
 
 /**
@@ -73,7 +77,15 @@ export interface Config {
   root: string;
   ssr: boolean;
   componentMap: Record<string, string>;
-  plugins: VuxPlugin[];
+  plugins: VuxLoaderPlugin[];
+  /**
+   * Sink for everything a module wants to say during a build.
+   *
+   * Carried on the config rather than reached for as a global, so that one
+   * build has one place its messages land - and so a test can hand a transform
+   * somewhere to write instead of replacing `console`.
+   */
+  logger: Logger;
 }
 
 /**

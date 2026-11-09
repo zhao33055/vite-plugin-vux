@@ -1,6 +1,8 @@
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+
+import { createRecorder } from "./helpers/recorder";
 
 import {
   createI18nCustomBlockTransform,
@@ -10,7 +12,7 @@ import {
 import { compileVue, resolveCompiler } from "../src/sfc/compiler";
 import type { BlockView } from "../src/contracts";
 import { scopeOf } from "../src/vux/paths";
-import type { Config, VuxPlugin } from "../src/types";
+import type { Config, VuxLoaderPlugin } from "../src/types";
 
 const locales: Record<string, Record<string, string>> = {
   "zh-CN": {
@@ -133,65 +135,81 @@ describe("resolveStaticTranslations", () => {
 
 describe("i18n template transform", () => {
   const VUX_FILE = "/app/node_modules/vux/src/components/actionsheet/index.vue";
+  const X_INPUT = "/app/node_modules/vux/src/components/x-input/index.vue";
   /** Where `vux/src/locales/all.yml` is read from; see the fixture's README. */
   const root = path.resolve(__dirname, "fixtures/vux-mini");
 
-  function run(plugins: VuxPlugin[], code: string, filename = VUX_FILE, from = root) {
-    const config: Config = { root: from, ssr: false, componentMap: {}, plugins };
+  /** One transform instance: what it patched, and what it said while doing so. */
+  function run(
+    code: string,
+    options: {
+      plugins?: VuxLoaderPlugin[];
+      filename?: string;
+      /** Project root, i.e. which package the locale table comes from. */
+      from?: string;
+    } = {}
+  ) {
+    const { plugins = [], filename = VUX_FILE, from = root } = options;
+    const logger = createRecorder();
+    const config: Config = { root: from, ssr: false, componentMap: {}, plugins, logger };
     const block: BlockView = { type: "template", filename, content: code, attrs: {} };
 
-    return createI18nTransform(config)(block, scopeOf(filename));
+    return {
+      patch: createI18nTransform(config)(block, scopeOf(filename)),
+      warnings: logger.messages,
+    };
   }
 
   it("replaces keys under the component's own namespace", () => {
     // `vux.actionsheet.cancel` is a key in the fixture's locales/all.yml.
-    expect(run([], "{{ $t('cancel') }}")).toEqual({ content: '{{ "取消" }}' });
+    expect(run("{{ $t('cancel') }}").patch).toEqual({ content: '{{ "取消" }}' });
   });
 
   it("leaves a key that has no translation, and reports it once", () => {
     // The fixture's x-input template references a key all.yml does not carry.
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const file = "/app/node_modules/vux/src/components/x-input/index.vue";
+    const { patch, warnings } = run("{{ $t('unknown_key') }}", { filename: X_INPUT });
 
-    expect(run([], "{{ $t('unknown_key') }}", file)).toBeUndefined();
-    expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toMatch(
-      /no "zh-CN" translation for "vux.x-input.unknown_key"/
-    );
-    warn.mockRestore();
+    expect(patch).toBeUndefined();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/^no "zh-CN" translation for "vux.x-input.unknown_key"/);
   });
 
   it("gives up with a warning when the package ships no locale table", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { patch, warnings } = run("{{ $t('cancel') }}", {
+      from: path.resolve(__dirname, "fixtures/no-vux"),
+    });
 
-    expect(
-      run([], "{{ $t('cancel') }}", VUX_FILE, path.resolve(__dirname, "fixtures/no-vux"))
-    ).toBeUndefined();
-    expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toMatch(
-      /vux locales not found/
-    );
-    warn.mockRestore();
+    expect(patch).toBeUndefined();
+    expect(warnings.join("\n")).toMatch(/vux locales not found/);
   });
 
   it("leaves an app's own $t calls to vue-i18n", () => {
-    expect(run([], "{{ $t('cancel') }}", "/app/src/pages/Home.vue")).toBeUndefined();
+    expect(
+      run("{{ $t('cancel') }}", { filename: "/app/src/pages/Home.vue" }).patch
+    ).toBeUndefined();
   });
 
   it("resolves through a renamed translation function", () => {
-    const renamed: VuxPlugin[] = [{ name: "i18n", vuxFunctionName: "$tt" }];
+    const plugins: VuxLoaderPlugin[] = [{ name: "i18n", vuxFunctionName: "$tt" }];
 
-    expect(run(renamed, "{{ $tt('cancel') }}")).toEqual({ content: '{{ "取消" }}' });
+    expect(run("{{ $tt('cancel') }}", { plugins }).patch).toEqual({
+      content: '{{ "取消" }}',
+    });
     // Both spellings are checked: the configured one must win, the other stay.
-    expect(run(renamed, "{{ $t('cancel') }}")).toBeUndefined();
+    expect(run("{{ $t('cancel') }}", { plugins }).patch).toBeUndefined();
   });
 
   it("does nothing when vuxStaticReplace is false", () => {
-    const dynamic: VuxPlugin[] = [{ name: "i18n", vuxStaticReplace: false }];
+    const plugins: VuxLoaderPlugin[] = [{ name: "i18n", vuxStaticReplace: false }];
 
-    expect(run(dynamic, "{{ $t('cancel') }}")).toBeUndefined();
+    expect(run("{{ $t('cancel') }}", { plugins }).patch).toBeUndefined();
   });
 
   it("reports nothing when the template has no calls at all", () => {
-    expect(run([], "<div>plain markup</div>")).toBeUndefined();
+    const { patch, warnings } = run("<div>plain markup</div>");
+
+    expect(patch).toBeUndefined();
+    expect(warnings).toEqual([]);
   });
 });
 

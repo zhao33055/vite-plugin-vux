@@ -1,5 +1,6 @@
 import { getStylesDir, getThemeVariables } from "./api";
-import type { VuxPlugin } from "../types";
+import { createConsoleLogger, type Logger } from "../shared/logger";
+import type { VuxLoaderPlugin } from "../types";
 
 /**
  * The `css` portion of the Vite config this plugin contributes.
@@ -10,7 +11,8 @@ import type { VuxPlugin } from "../types";
  */
 export function lessConfig(
   root: string,
-  plugins: VuxPlugin[]
+  plugins: VuxLoaderPlugin[],
+  logger: Logger = createConsoleLogger()
 ): {
   preprocessorOptions: { less: { paths: string[]; modifyVars: Record<string, string> } };
 } {
@@ -18,7 +20,7 @@ export function lessConfig(
     preprocessorOptions: {
       less: {
         paths: [getStylesDir(root)],
-        modifyVars: getThemeVariables(root, plugins),
+        modifyVars: getThemeVariables(root, plugins, logger),
       },
     },
   };

@@ -100,6 +100,7 @@ export function inlineXIcon(
 /** Reads an icon from the installed vux package, warning once per missing name. */
 function createIconLoader(config: Config): (type: string) => string | null {
   const iconsDir = path.resolve(config.root, "node_modules", "vux", "src", "icons");
+  const { logger } = config;
   const missing = new Set<string>();
 
   return (type) => {
@@ -108,8 +109,8 @@ function createIconLoader(config: Config): (type: string) => string | null {
     if (!exists(svgPath)) {
       if (!missing.has(type)) {
         missing.add(type);
-        console.warn(
-          `[vite-plugin-vux] vux icon "${type}" not found in ${iconsDir}, leaving <x-icon> as-is.`
+        logger.warn(
+          `vux icon "${type}" not found in ${iconsDir}, leaving <x-icon> as-is.`
         );
       }
       return null;

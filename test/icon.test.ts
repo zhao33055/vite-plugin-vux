@@ -1,6 +1,8 @@
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+
+import { createRecorder } from "./helpers/recorder";
 
 import {
   createXiconTransform,
@@ -110,21 +112,26 @@ describe("inlineXIcon", () => {
 
 describe("x-icon transform", () => {
   /** Reads `vux/src/icons` from the fixture package; see its README. */
-  const config: Config = {
-    root: path.resolve(__dirname, "fixtures/vux-mini"),
-    ssr: false,
-    componentMap: {},
-    plugins: [],
-  };
-
   function run(content: string, filename = "/app/src/pages/Home.vue") {
+    const logger = createRecorder();
+    const config: Config = {
+      root: path.resolve(__dirname, "fixtures/vux-mini"),
+      ssr: false,
+      componentMap: {},
+      plugins: [],
+      logger,
+    };
     const block: BlockView = { type: "template", filename, content, attrs: {} };
+
     // Scope deliberately says "the app's own file": icons are inlined everywhere.
-    return createXiconTransform(config)(block, NO_SCOPE);
+    return {
+      patch: createXiconTransform(config)(block, NO_SCOPE),
+      warnings: logger.messages,
+    };
   }
 
   it("reports the inlined markup as a patch", () => {
-    const patch = run('<div><x-icon type="ios-arrow-up"></x-icon></div>');
+    const patch = run('<div><x-icon type="ios-arrow-up"></x-icon></div>').patch;
 
     expect(patch?.content).toContain("vux-x-icon-ios-arrow-up");
     expect(patch?.content).not.toContain("<x-icon");
@@ -132,33 +139,22 @@ describe("x-icon transform", () => {
 
   it("says nothing when the template has no icons", () => {
     // The pipeline uses "no patch" to skip re-serialising a block.
-    expect(run("<div>plain markup</div>")).toBeUndefined();
+    expect(run("<div>plain markup</div>").patch).toBeUndefined();
   });
 
   it("keeps a bound type as a component call", () => {
-    const patch = run('<x-icon :type="current"></x-icon>');
-
-    expect(patch).toBeUndefined();
+    expect(run('<x-icon :type="current"></x-icon>').patch).toBeUndefined();
   });
 
   it("warns once per missing icon, however many times it appears", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    // One transform instance stands for one build: that is the scope in which
-    // the complaint is deduplicated, so it is built here rather than via `run`.
-    const transform = createXiconTransform(config);
-    const block: BlockView = {
-      type: "template",
-      filename: "/app/src/pages/Home.vue",
-      content:
-        '<div><x-icon type="no-such-icon"></x-icon><x-icon type="no-such-icon"/></div>',
-      attrs: {},
-    };
+    const { patch, warnings } = run(
+      '<div><x-icon type="no-such-icon"></x-icon><x-icon type="no-such-icon"/></div>'
+    );
 
-    expect(transform(block, NO_SCOPE)).toBeUndefined();
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(String(warn.mock.calls[0]?.[0])).toMatch(
+    expect(patch).toBeUndefined();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(
       /vux icon "no-such-icon" not found.*leaving <x-icon> as-is/
     );
-    warn.mockRestore();
   });
 });

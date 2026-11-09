@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import vux, { createVuxContext } from "../src/index";
+import { createRecorder } from "./helpers/recorder";
+import vux, { buildVuxPlugins, createVuxContext, type Logger } from "../src/index";
 
 /** See `test/fixtures/vux-mini/README.md` - nothing here reads the real package. */
 const root = path.resolve(__dirname, "fixtures/vux-mini");
@@ -19,8 +20,12 @@ const noVuxRoot = path.resolve(__dirname, "fixtures/no-vux");
  * is what stops the plugins from falling back to this repository's own
  * `node_modules`.
  */
-function pluginsAt(dir: string, options: Parameters<typeof vux>[0] = {}) {
-  const plugins = vux(options);
+function pluginsAt(
+  dir: string,
+  options: Parameters<typeof buildVuxPlugins>[0] = {},
+  logger?: Logger
+) {
+  const plugins = buildVuxPlugins(options, logger);
   const config = plugins[0].config as (this: unknown, c: unknown) => unknown;
   config.call({}, { root: dir });
   return plugins;
@@ -79,20 +84,79 @@ describe("plugin factory", () => {
   });
 
   it("warns about i18n options that are accepted but not implemented", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const plugins = vux({
-      plugins: [{ name: "i18n", staticReplace: true, functionName: "$tt" }],
-    });
-    const config = plugins[0].config as (this: unknown, c: unknown) => unknown;
+    const logger = createRecorder();
 
-    config.call({}, { root });
+    pluginsAt(
+      root,
+      {
+        plugins: [{ name: "i18n", staticReplace: true, functionName: "$tt" }],
+      },
+      logger
+    );
 
-    const message = warn.mock.calls.map((call) => String(call[0])).join("\n");
+    const message = logger.messages.join("\n");
     expect(message).toMatch(/staticReplace/);
     expect(message).toMatch(/functionName/);
     // An option that does work must not appear in the complaint.
     expect(message).not.toMatch(/vuxLocale/);
-    warn.mockRestore();
+  });
+
+  it("says nothing about i18n options that are implemented", () => {
+    const logger = createRecorder();
+
+    pluginsAt(root, { plugins: [{ name: "i18n", vuxLocale: "en" }] }, logger);
+
+    expect(logger.messages).toEqual([]);
+  });
+
+  it("warns when this plugin is registered before the vue plugin", () => {
+    // `configResolved` is typed with `this: void`, so the ordering complaint has
+    // to reach the build's logger - which is also what makes it assertable.
+    const logger = createRecorder();
+    const plugins = pluginsAt(root, {}, logger);
+    const autoImport = plugins.find(
+      (plugin) => plugin.name === "vite-plugin-vux:auto-import"
+    );
+    const configResolved = autoImport?.configResolved as (
+      this: unknown,
+      resolved: unknown
+    ) => void;
+
+    configResolved.call(
+      {},
+      {
+        plugins: [
+          ...plugins.map((plugin) => ({ name: plugin.name })),
+          { name: "vite:vue2" },
+        ],
+      }
+    );
+
+    expect(logger.messages.join("\n")).toMatch(/vux\(\) is registered before vue\(\)/);
+  });
+
+  it("says nothing about plugin order when vue() comes first", () => {
+    const logger = createRecorder();
+    const plugins = pluginsAt(root, {}, logger);
+    const autoImport = plugins.find(
+      (plugin) => plugin.name === "vite-plugin-vux:auto-import"
+    );
+    const configResolved = autoImport?.configResolved as (
+      this: unknown,
+      resolved: unknown
+    ) => void;
+
+    configResolved.call(
+      {},
+      {
+        plugins: [
+          { name: "vite:vue2" },
+          ...plugins.map((plugin) => ({ name: plugin.name })),
+        ],
+      }
+    );
+
+    expect(logger.messages).toEqual([]);
   });
 
   it("resolves the component map against vite's root, not the cwd", () => {

@@ -23,16 +23,22 @@ import type { VuxOptions } from "./types";
  * itself - the i18n one reads its locale table, the x-icon one its SVG files -
  * and both go through `shared/fs` rather than opening a file directly. Every
  * other decision in `sfc/` is made from the block's own text.
+ *
+ * Nothing below this file writes to a stream of its own accord: warnings go to
+ * the `Logger` the build was created with, which defaults to the console. Use
+ * `buildVuxPlugins` instead of the default export to choose somewhere else.
  */
 export default function vux(options: VuxOptions = {}): Plugin[] {
   return buildVuxPlugins(options);
 }
 
+export { buildVuxPlugins } from "./plugin";
 export { createVuxContext, type VuxContext } from "./context";
+export type { Logger } from "./shared/logger";
 
 export type {
   VuxOptions,
-  VuxPlugin,
+  VuxLoaderPlugin,
   VuxPluginName,
   VuxI18nPlugin,
   VuxLessThemePlugin,

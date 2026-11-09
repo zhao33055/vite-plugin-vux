@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+
+import { createRecorder } from "./helpers/recorder";
 
 import {
   getComponentMap,
@@ -62,13 +64,14 @@ describe("getVariables", () => {
   });
 
   it("warns and skips names that cannot be less variables", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const logger = createRecorder();
     // The fixture contains a selector line, which must not become a variable.
-    const vars = getVariables(path.resolve(root, "theme.less"));
+    const vars = getVariables(path.resolve(root, "theme.less"), logger);
 
     expect(Object.keys(vars).every((key) => /^[A-Za-z0-9_-]+$/.test(key))).toBe(true);
-    expect(warn).toHaveBeenCalled();
-    warn.mockRestore();
+    expect(logger.messages).toEqual([
+      "ignoring suspicious theme variable name: bad name with spaces",
+    ]);
   });
 
   it("throws when the theme file is missing", () => {

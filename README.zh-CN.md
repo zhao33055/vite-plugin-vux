@@ -83,7 +83,11 @@ vux({
 | 参数       | 类型          | 默认值 | 说明                                                            |
 | ---------- | ------------- | ------ | --------------------------------------------------------------- |
 | `ssr`      | `boolean`     | `false`| 开启时所有模板保留 `<v-ssr>`、删除 `<v-no-ssr>`；关闭时相反。    |
-| `plugins`  | `VuxPlugin[]` | `[]`   | 转换器描述对象，形状沿用 vux-loader 的插件定义。                 |
+| `plugins`  | `VuxLoaderPlugin[]` | `[]`   | 转换器描述对象，形状沿用 vux-loader 的插件定义。                 |
+
+`VuxLoaderPlugin` 就是 1.x 导出的 `VuxPlugin`。旧名字读起来像「本插件提供的 Vite 插件」，而那恰好是 `vux()` 返回的四个插件；需要更具体名字的是这些 vux-loader 形状的描述对象。
+
+本插件要说的话都不再自己写 `console`：告警统一交给创建构建时传入的 `Logger`，默认就是 console。要内嵌本插件、或把它的消息收集起来而不是打印，用 `buildVuxPlugins(options, logger)` —— 同样的四个插件，只是换个落点。
 
 ### `less-theme`
 

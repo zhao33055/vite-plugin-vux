@@ -83,7 +83,11 @@ vux({
 | Option      | Type          | Default | Description                                                    |
 | ----------- | ------------- | ------- | -------------------------------------------------------------- |
 | `ssr`       | `boolean`     | `false` | Keeps `<v-ssr>` and drops `<v-no-ssr>` in every template; the reverse when off. |
-| `plugins`   | `VuxPlugin[]` | `[]`    | Transform descriptors, modelled on vux-loader's plugin objects. |
+| `plugins`   | `VuxLoaderPlugin[]` | `[]`    | Transform descriptors, modelled on vux-loader's plugin objects. |
+
+`VuxLoaderPlugin` is what 1.x exported as `VuxPlugin`. The old name read as "a plugin this package contributes", which is precisely what the four Vite plugins returned by `vux()` are; the vux-loader-shaped descriptors are the ones that needed a more specific name.
+
+Nothing this package has to say goes to `console` on its own — warnings reach the `Logger` the build was created with, which is the console by default. Embedding the plugin, or collecting its messages rather than printing them, is `buildVuxPlugins(options, logger)`: the same four plugins with a different sink.
 
 ### `less-theme`
 

@@ -4,8 +4,9 @@ import stripCssComments from "strip-css-comments";
 
 import { tryRequire } from "../shared/module";
 import { exists, readSourceFile } from "../shared/fs";
+import { createConsoleLogger, type Logger } from "../shared/logger";
 import { vuxPath } from "./paths";
-import type { VuxPlugin, VuxPluginName, VuxLessThemePlugin } from "../types";
+import type { VuxLoaderPlugin, VuxPluginName, VuxLessThemePlugin } from "../types";
 
 /**
  * Reads the data the plugin needs from the installed vux package and from the
@@ -19,7 +20,7 @@ import type { VuxPlugin, VuxPluginName, VuxLessThemePlugin } from "../types";
  */
 
 export type {
-  VuxPlugin,
+  VuxLoaderPlugin,
   VuxPluginName,
   VuxI18nPlugin,
   VuxLessThemePlugin,
@@ -27,8 +28,8 @@ export type {
   ResolvedI18nOptions,
 } from "../types";
 
-export function findPlugin<T extends VuxPlugin = VuxPlugin>(
-  plugins: VuxPlugin[],
+export function findPlugin<T extends VuxLoaderPlugin = VuxLoaderPlugin>(
+  plugins: VuxLoaderPlugin[],
   name: VuxPluginName
 ): T | undefined {
   return plugins.find((plugin) => plugin.name === name) as T | undefined;
@@ -77,7 +78,10 @@ function trim(value: string | undefined): string {
  * Extracts `@name: value;` declarations from a less file, following
  * `@import` statements, for use as less `modifyVars`.
  */
-export function getVariables(filePath: string): Record<string, string> {
+export function getVariables(
+  filePath: string,
+  logger: Logger = createConsoleLogger()
+): Record<string, string> {
   const variables: Record<string, string> = {};
 
   if (!exists(filePath)) {
@@ -115,7 +119,7 @@ export function getVariables(filePath: string): Record<string, string> {
 
         Object.assign(
           variables,
-          getVariables(path.resolve(path.dirname(filePath), imported))
+          getVariables(path.resolve(path.dirname(filePath), imported), logger)
         );
         return;
       }
@@ -124,7 +128,7 @@ export function getVariables(filePath: string): Record<string, string> {
       if (!key) return;
 
       if (!VALID_VARIABLE_NAME.test(key)) {
-        console.warn(`[vite-plugin-vux] ignoring suspicious theme variable name: ${key}`);
+        logger.warn(`ignoring suspicious theme variable name: ${key}`);
         return;
       }
 
@@ -136,10 +140,11 @@ export function getVariables(filePath: string): Record<string, string> {
 
 export function getThemeVariables(
   root: string,
-  plugins: VuxPlugin[]
+  plugins: VuxLoaderPlugin[],
+  logger: Logger = createConsoleLogger()
 ): Record<string, string> {
   const theme = findPlugin<VuxLessThemePlugin>(plugins, "less-theme");
   if (!theme) return {};
 
-  return getVariables(path.resolve(root, theme.path));
+  return getVariables(path.resolve(root, theme.path), logger);
 }
